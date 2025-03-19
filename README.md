@@ -1,40 +1,73 @@
-#!/bin/bash
+SET SERVEROUTPUT ON;
+SET FEEDBACK OFF;
+SET VERIFY OFF;
+SET HEADING OFF;
+SET LINESIZE 300;
+SET PAGESIZE 1000;
 
-# Define file paths (using NFS for shared access)
-INPUT_FILE="/mnt/nfs/employee_ids.txt"   # Master file with all employee details
-SQL_INPUT_FILE="/mnt/nfs/filtered_ids.txt"  # File that will contain only the filtered Employee IDs
-LOG_FILE="/mnt/nfs/lock_users.log"         # Log file for tracking
+DECLARE
+    v_employee_id VARCHAR2(100);
+    v_count NUMBER;
+    v_username VARCHAR2(100);
+    file UTL_FILE.FILE_TYPE;
+    file_path VARCHAR2(500) := '/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt';  -- Path to Employee IDs file
 
-# Create/clear the log file
-> "$LOG_FILE"
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('--- Starting User Lock Process ---');
 
-# Extract Employee IDs from the input file where the Details field contains specific keywords.
-# Assumes the file is tab-delimited and the Employee ID is the third field.
-grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk -F'\t' '{print $3}' > "$SQL_INPUT_FILE"
+    -- Open the Employee IDs file from NFS
+    file := UTL_FILE.FOPEN('DBA_TEST', 'file_path', 'R');
 
-# Check if the filtered file has Employee IDs
-if [ ! -s "$SQL_INPUT_FILE" ]; then
-    echo "[$(date)] No matching Employee IDs found. Exiting." | tee -a "$LOG_FILE"
-    exit 1
-fi
+    LOOP
+        BEGIN
+            UTL_FILE.GET_LINE(file, v_employee_id);
 
-# Read each Employee ID from the filtered file and pass it as an argument to the SQL script
-while IFS= read -r employee_id; do
-    echo "[$(date)] Processing Employee ID: $employee_id" | tee -a "$LOG_FILE"
-    
-    # Execute the SQL script using OEM-provided credentials (no hardcoded username/password)
-    sqlplus -s /nolog <<EOF >> "$LOG_FILE" 2>&1
-CONNECT /
-@/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.sql "$employee_id"
-EXIT
-EOF
+            -- Check if the user exists in DBA_USERS
+            SELECT COUNT(*) INTO v_count
+            FROM DBA_USERS
+            WHERE USERNAME LIKE '%' || v_employee_id || '%'
+               OR USERNAME LIKE 'OPS$%' || v_employee_id || '%'
+               OR USERNAME LIKE 'DBA%' || v_employee_id || '%'
+               OR USERNAME LIKE 'DBD%' || v_employee_id || '%';
 
-    # Check for errors for this Employee ID
-    if [ $? -eq 0 ]; then
-        echo "[$(date)] User lock process for $employee_id completed successfully." | tee -a "$LOG_FILE"
-    else
-        echo "[$(date)] Error encountered while processing $employee_id." | tee -a "$LOG_FILE"
-    fi
-done < "$SQL_INPUT_FILE"
+            -- If the user exists, lock the account
+            IF v_count > 0 THEN
+                FOR user_rec IN (SELECT USERNAME FROM DBA_USERS
+                                 WHERE USERNAME LIKE '%' || v_employee_id || '%'
+                                    OR USERNAME LIKE 'OPS$%' || v_employee_id || '%'
+                                    OR USERNAME LIKE 'DBA%' || v_employee_id || '%'
+                                    OR USERNAME LIKE 'DBD%' || v_employee_id || '%')
+                LOOP
+                    v_username := user_rec.USERNAME;
 
-echo "[$(date)] User locking process completed for all employees." | tee -a "$LOG_FILE"
+                    -- Lock the Oracle user account
+                    EXECUTE IMMEDIATE 'ALTER USER ' || v_username || ' ACCOUNT LOCK';
+
+                    -- Print success message
+                    DBMS_OUTPUT.PUT_LINE('User ' || v_username || ' locked successfully.');
+                END LOOP;
+            ELSE
+                DBMS_OUTPUT.PUT_LINE('No matching user found for Employee ID: ' || v_employee_id);
+            END IF;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                EXIT;
+        END;
+    END LOOP;
+
+    -- Close file
+    UTL_FILE.FCLOSE(file);
+
+    DBMS_OUTPUT.PUT_LINE('--- User Lock Process Completed ---');
+END;
+/
+
+--- Starting User Lock Process ---
+DECLARE
+*
+ERROR at line 1:
+ORA-29283: invalid file operation: nonexistent file or path [29434]
+ORA-06512: at "SYS.UTL_FILE", line 536
+ORA-06512: at "SYS.UTL_FILE", line 41
+ORA-06512: at "SYS.UTL_FILE", line 478
+ORA-06512: at line 12
