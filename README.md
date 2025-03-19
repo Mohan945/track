@@ -24,13 +24,12 @@ fi
 while IFS= read -r employee_id; do
     echo "[$(date)] Processing Employee ID: $employee_id" | tee -a "$LOG_FILE"
     
-    sqlplus -s "$DB_CONNECTION" @/mnt/nfs/lock_users.sql "$employee_id" >> "$LOG_FILE" 2>&1
-    
-    if [ $? -eq 0 ]; then
-        echo "[$(date)] User lock process for $employee_id completed successfully." | tee -a "$LOG_FILE"
-    else
-        echo "[$(date)] Error encountered while processing $employee_id." | tee -a "$LOG_FILE"
-    fi
-done < "$SQL_INPUT_FILE"
+ # Execute the SQL script using OEM-provided credentials
+sqlplus -s / @/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.sql "$SQL_INPUT_FILE" >> "$LOG_FILE" 2>&1
 
-echo "[$(date)] User locking process completed for all employees." | tee -a "$LOG_FILE"
+# Check for errors
+if [ $? -eq 0 ]; then
+    echo "[$(date)] User locking process completed successfully." | tee -a "$LOG_FILE"
+else
+    echo "[$(date)] User locking process encountered errors." | tee -a "$LOG_FILE"
+fi
