@@ -40,3 +40,8 @@ if [ $? -eq 0 ]; then
 else
     echo "[$(date)] User locking process encountered errors. Check log for details." | tee -a "$LOG_FILE"
 fi
+
+awk: cmd. line:1: {print "'" $1 "'","}
+awk: cmd. line:1:                   ^ unterminated string
+awk: cmd. line:1: {print "'" $1 "'","}
+awk: cmd. line:1:                   ^ syntax error
