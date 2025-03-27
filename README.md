@@ -4,18 +4,18 @@
 INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/employee_ids.txt"
 SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt"
 LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
-SQL_SCRIPT="/tmp/lock_users.sql"
+SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
 
 # Database credentials
-DB_USER="your_db_user"
-DB_PASS="your_db_password"
-DB_NAME="your_test_db"
+DB_USER="SYSTEM"
+DB_PASS="cowboy_1"
+DB_NAME="CI01SYST"
 
 # Clear previous log file
 > "$LOG_FILE"
 
 # Extract Employee IDs where Details contain specific keywords
-grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $3}' > "$SQL_INPUT_FILE"
+grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
 
 # Check if the SQL input file has Employee IDs
 if [ ! -s "$SQL_INPUT_FILE" ]; then
@@ -49,7 +49,7 @@ echo "/" >> "$SQL_SCRIPT"
 echo "SPOOL OFF;" >> "$SQL_SCRIPT"
 
 # Execute SQL script
-sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" < "$SQL_SCRIPT" | tee -a "$LOG_FILE"
+sqlplus -s "$DB_USER/$DB_PASS" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
 
 # Check for errors
 if [ $? -eq 0 ]; then
