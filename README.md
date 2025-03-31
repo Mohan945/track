@@ -25,12 +25,16 @@ if [ ! -s "$SQL_INPUT_FILE" ]; then
 fi
 
 # Process each database in the predefined list
-while read DB_NAME; do
+while IFS= read -r DB_NAME; do
+    # Skip empty lines
+    if [ -z "$DB_NAME" ]; then
+        continue
+    fi
+
     echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
 
     # Check if the database exists in the TNS file
-    grep -q -w "$DB_NAME" "$TNS_FILE"
-    if [ $? -ne 0 ]; then
+    if ! grep -q -w "$DB_NAME" "$TNS_FILE"; then
         echo "[$(date)] Database $DB_NAME not found in TNS file. Skipping." | tee -a "$LOG_FILE"
         continue
     fi
@@ -43,12 +47,14 @@ while read DB_NAME; do
     echo "  v_user_found NUMBER := 0;" >> "$SQL_SCRIPT"
     echo "BEGIN" >> "$SQL_SCRIPT"
 
-    while read EMP_ID; do
-        echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
-        echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
-        echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
-        echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
-        echo "  END LOOP;" >> "$SQL_SCRIPT"
+    while IFS= read -r EMP_ID; do
+        if [ -n "$EMP_ID" ]; then
+            echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
+            echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
+            echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
+            echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
+            echo "  END LOOP;" >> "$SQL_SCRIPT"
+        fi
     done < "$SQL_INPUT_FILE"
 
     echo "  IF v_user_found = 0 THEN" >> "$SQL_SCRIPT"
