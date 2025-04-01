@@ -1,3 +1,4 @@
+###script
 #!/bin/ksh
 
 #########################
@@ -10,7 +11,6 @@ SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.t
 LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
 SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
 TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
-REPORT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/locked_report.txt"
 
 # Database credentials
 DB_USER="SYSTEM"
@@ -19,9 +19,8 @@ DB_PASS="cowboy_1"
 # Hardcoded list of databases
 DB_NAMES=("CI01SYST" "OA21SYST" "MI22SYST")  # Add your database names here
 
-# Clear previous log file and report file
+# Clear previous log file
 > "$LOG_FILE"
-> "$REPORT_FILE"
 
 # Extract Employee IDs where Details contain specific keywords
 grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
@@ -70,6 +69,7 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     echo "EXIT;" >> "$SQL_SCRIPT"   # Ensures SQL*Plus exits after execution
 
     # Execute SQL script and capture the exit status
+
     sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
     SQL_EXIT_CODE=${PIPESTATUS[0]}
 
@@ -86,70 +86,36 @@ done
 
 echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
 
-#################################
-# Generate Locked Accounts Report
-#################################
 
-# Loop through each database to check for accounts locked today
-for DB_NAME in "${DB_NAMES[@]}"; do
-    # Query Oracle for accounts locked today via ALTER commands.
-    LOCKED_ACCOUNTS=$(sqlplus -s "${DB_USER}/${DB_PASS}@${DB_NAME}" <<EOF
-SET HEADING OFF
-SET FEEDBACK OFF
-SET PAGESIZE 0
-SET LINESIZE 200
-SELECT username FROM dba_audit_trail
- WHERE action_name='ALTER USER'
-   AND UPPER(sql_text) LIKE '%ACCOUNT LOCK%'
-   AND TO_CHAR(timestamp, 'YYYY-MM-DD') = TO_CHAR(SYSDATE, 'YYYY-MM-DD');
-EXIT;
-EOF
-)
-    # Clean up the output
-    LOCKED_ACCOUNTS=$(echo "$LOCKED_ACCOUNTS" | sed '/^\s*$/d')
+######Running process of .sh
+[oracle@exa5dbadm01 test]$ . oraenv
+ORACLE_SID = [oracle] ? CI01GSYS
+The Oracle base has been set to /u01/app/oracle
+Setting Oracle Instance Suffix for CI01GSYS
+                           .... to CI01GSYS_1
+CI01GSYS_1 /u01/app/oracle/product/19.0.0.0/dbhome_7
+[oracle@exa5dbadm01 test]$ ./main.sh
+[Tue Apr  1 17:26:33 BST 2025] Processing database: CI01SYST
+Locking user: CO70989
+Locking user: CO70000_CUST
 
-    # For each returned username, append a table row with DB name and EmpID
-    if [ -n "$LOCKED_ACCOUNTS" ]; then
-        for USER in $LOCKED_ACCOUNTS; do
-            echo "<tr><td>${DB_NAME}</td><td>${USER}</td></tr>" >> "$REPORT_FILE"
-        done
-    fi
-done
+PL/SQL procedure successfully completed.
 
-# Check if there are locked users before sending the email
-if [ ! -s "$REPORT_FILE" ]; then
-    echo "[$(date)] No users were locked today. Email not sent." | tee -a "$LOG_FILE"
-    exit 0
-fi
+[Tue Apr  1 17:26:33 BST 2025] Successfully processed database: CI01SYST
 
-#################################
-# Send Email Report
-#################################
+[Tue Apr  1 17:26:33 BST 2025] Processing database: OA21SYST
+No matching users found to lock.
 
-# Build the email body (Only the Table)
-MAIL_BODY=$(cat <<EOF
-<table border="1" cellspacing="0" cellpadding="5">
-  <tr>
-    <th>DB Name</th>
-    <th>Locked User</th>
-  </tr>
-$(cat "$REPORT_FILE")
-</table>
-EOF
-)
+PL/SQL procedure successfully completed.
 
-# Email recipient
-RECIPIENT="gouk_oracle@standardlife.com"
+[Tue Apr  1 17:26:33 BST 2025] Successfully processed database: OA21SYST
 
-# Send email
-(
-  echo "To: ${RECIPIENT}"
-  echo "Subject: Today's Locked Accounts Report"
-  echo "MIME-Version: 1.0"
-  echo "Content-Type: text/html"
-  echo ""
-  echo "$MAIL_BODY"
-) | sendmail -t
+[Tue Apr  1 17:26:33 BST 2025] Processing database: MI22SYST
+Locking user: CO70989
 
-# Clean up temporary file
-rm -f "$REPORT_FILE"
+PL/SQL procedure successfully completed.
+
+[Tue Apr  1 17:26:34 BST 2025] Successfully processed database: MI22SYST
+
+[Tue Apr  1 17:26:34 BST 2025] Locking process completed.
+[oracle@exa5dbadm01 test]$
