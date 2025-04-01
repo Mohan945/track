@@ -1,12 +1,15 @@
 #!/bin/ksh
 
+#########################
+# Locking Process Start #
+#########################
+
 # Define file paths
 INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/employee_ids.txt"
 SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt"
 LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
 SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
 TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
-LOCKED_USERS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/locked_users.html"
 
 # Database credentials
 DB_USER="SYSTEM"
@@ -15,9 +18,8 @@ DB_PASS="cowboy_1"
 # Hardcoded list of databases
 DB_NAMES=("CI01SYST" "OA21SYST" "MI22SYST")  # Add your database names here
 
-# Clear previous log file and locked users file
+# Clear previous log file
 > "$LOG_FILE"
-> "$LOCKED_USERS_FILE"
 
 # Extract Employee IDs where Details contain specific keywords
 grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
@@ -28,11 +30,7 @@ if [ ! -s "$SQL_INPUT_FILE" ]; then
     exit 1
 fi
 
-# Add table header to the locked users file
-echo "<table border='1'>" > "$LOCKED_USERS_FILE"
-echo "<tr><th>Database Name</th><th>Employee ID</th></tr>" >> "$LOCKED_USERS_FILE"
-
-# Process each database in the predefined list
+# Process each database for locking accounts
 for DB_NAME in "${DB_NAMES[@]}"; do
     echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
 
@@ -43,7 +41,7 @@ for DB_NAME in "${DB_NAMES[@]}"; do
         continue
     fi
 
-    # Build the SQL script dynamically
+    # Build the SQL script dynamically for locking accounts
     > "$SQL_SCRIPT"
     echo "SET SERVEROUTPUT ON;" >> "$SQL_SCRIPT"
     echo "SPOOL $LOG_FILE APPEND;" >> "$SQL_SCRIPT"
@@ -67,7 +65,7 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     echo "END;" >> "$SQL_SCRIPT"
     echo "/" >> "$SQL_SCRIPT"
     echo "SPOOL OFF;" >> "$SQL_SCRIPT"
-    echo "EXIT;" >> "$SQL_SCRIPT"  # Ensures SQL*Plus exits after execution
+    echo "EXIT;" >> "$SQL_SCRIPT"   # Ensures SQL*Plus exits after execution
 
     # Execute SQL script and capture the exit status
     sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
@@ -82,38 +80,69 @@ for DB_NAME in "${DB_NAMES[@]}"; do
 
     # Insert a blank line between databases in the log
     echo "" | tee -a "$LOG_FILE"
+done
 
-    # Fetch users locked today in the current database
-    LOCKED_USERS=$(sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" <<EOF
-SET HEADING OFF;
-SET FEEDBACK OFF;
-SELECT username FROM dba_users WHERE ACCOUNT_STATUS='LOCKED' AND LOCK_DATE >= TRUNC(SYSDATE);
+echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
+
+#################################
+# End of Locking Process        #
+# Begin Locked Accounts Report  #
+#################################
+
+# Temporary file to hold the report rows
+REPORT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/locked_report.txt"
+> "$REPORT_FILE"  # Clear previous report
+
+# Loop through each database to check for accounts locked today
+for DB_NAME in "${DB_NAMES[@]}"; do
+    # Query Oracle for accounts locked today via ALTER commands.
+    LOCKED_ACCOUNTS=$(sqlplus -s "${DB_USER}/${DB_PASS}@${DB_NAME}" <<EOF
+SET HEADING OFF
+SET FEEDBACK OFF
+SET PAGESIZE 0
+SET LINESIZE 200
+SELECT username FROM dba_audit_trail
+ WHERE action_name='ALTER USER'
+   AND UPPER(sql_text) LIKE '%ACCOUNT LOCK%'
+   AND TO_CHAR(timestamp, 'YYYY-MM-DD') = TO_CHAR(SYSDATE, 'YYYY-MM-DD');
 EXIT;
 EOF
 )
+    # Clean up the output
+    LOCKED_ACCOUNTS=$(echo "$LOCKED_ACCOUNTS" | sed '/^\s*$/d')
 
-    # Add locked users to the HTML table
-    for USER in $LOCKED_USERS; do
-        echo "<tr><td>$DB_NAME</td><td>$USER</td></tr>" >> "$LOCKED_USERS_FILE"
-    done
+    # For each returned username, append a table row with DB name and EmpID
+    if [ -n "$LOCKED_ACCOUNTS" ]; then
+        for USER in $LOCKED_ACCOUNTS; do
+            echo "<tr><td>${DB_NAME}</td><td>${USER}</td></tr>" >> "$REPORT_FILE"
+        done
+    fi
 done
 
-# Close the HTML table
-echo "</table>" >> "$LOCKED_USERS_FILE"
+# Build the email with ONLY the HTML table (no <html> or <body>)
+MAIL_BODY=$(cat <<EOF
+<table border="1" cellspacing="0" cellpadding="5">
+  <tr>
+    <th>DB Name</th>
+    <th>EmpID</th>
+  </tr>
+$(cat "$REPORT_FILE")
+</table>
+EOF
+)
 
-# Check if any users were locked today before sending email
-if grep -q "<tr><td>" "$LOCKED_USERS_FILE"; then
-    (
-        echo "From: sender@example.com"
-        echo "To: recipient@example.com"
-        echo "Subject: Locked Users Report"
-        echo "MIME-Version: 1.0"
-        echo "Content-Type: text/html"
-        echo ""
-        cat "$LOCKED_USERS_FILE"  # Ensure the email only contains the table
-    ) | /usr/bin/mailx -s "Locked Users Report" recipient@example.com
-else
-    echo "[$(date)] No users were locked today. Email not sent." | tee -a "$LOG_FILE"
-fi
+# Specify your email recipient here (adjust as needed)
+RECIPIENT="gouk_oracle@standardlife.com"
 
-echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
+# Construct the email with proper headers and send via sendmail.
+(
+  echo "To: ${RECIPIENT}"
+  echo "Subject: Today's Locked Accounts Report"
+  echo "MIME-Version: 1.0"
+  echo "Content-Type: text/html"
+  echo ""
+  echo "$MAIL_BODY"
+) | sendmail -t
+
+# Clean up temporary file
+rm -f "$REPORT_FILE"
