@@ -10,6 +10,7 @@ SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.t
 LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
 SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
 TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
+REPORT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/locked_report.txt"
 
 # Database credentials
 DB_USER="SYSTEM"
@@ -18,8 +19,9 @@ DB_PASS="cowboy_1"
 # Hardcoded list of databases
 DB_NAMES=("CI01SYST" "OA21SYST" "MI22SYST")  # Add your database names here
 
-# Clear previous log file
+# Clear previous log file and report file
 > "$LOG_FILE"
+> "$REPORT_FILE"
 
 # Extract Employee IDs where Details contain specific keywords
 grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
@@ -83,3 +85,71 @@ for DB_NAME in "${DB_NAMES[@]}"; do
 done
 
 echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
+
+#################################
+# Generate Locked Accounts Report
+#################################
+
+# Loop through each database to check for accounts locked today
+for DB_NAME in "${DB_NAMES[@]}"; do
+    # Query Oracle for accounts locked today via ALTER commands.
+    LOCKED_ACCOUNTS=$(sqlplus -s "${DB_USER}/${DB_PASS}@${DB_NAME}" <<EOF
+SET HEADING OFF
+SET FEEDBACK OFF
+SET PAGESIZE 0
+SET LINESIZE 200
+SELECT username FROM dba_audit_trail
+ WHERE action_name='ALTER USER'
+   AND UPPER(sql_text) LIKE '%ACCOUNT LOCK%'
+   AND TO_CHAR(timestamp, 'YYYY-MM-DD') = TO_CHAR(SYSDATE, 'YYYY-MM-DD');
+EXIT;
+EOF
+)
+    # Clean up the output
+    LOCKED_ACCOUNTS=$(echo "$LOCKED_ACCOUNTS" | sed '/^\s*$/d')
+
+    # For each returned username, append a table row with DB name and EmpID
+    if [ -n "$LOCKED_ACCOUNTS" ]; then
+        for USER in $LOCKED_ACCOUNTS; do
+            echo "<tr><td>${DB_NAME}</td><td>${USER}</td></tr>" >> "$REPORT_FILE"
+        done
+    fi
+done
+
+# Check if there are locked users before sending the email
+if [ ! -s "$REPORT_FILE" ]; then
+    echo "[$(date)] No users were locked today. Email not sent." | tee -a "$LOG_FILE"
+    exit 0
+fi
+
+#################################
+# Send Email Report
+#################################
+
+# Build the email body (Only the Table)
+MAIL_BODY=$(cat <<EOF
+<table border="1" cellspacing="0" cellpadding="5">
+  <tr>
+    <th>DB Name</th>
+    <th>Locked User</th>
+  </tr>
+$(cat "$REPORT_FILE")
+</table>
+EOF
+)
+
+# Email recipient
+RECIPIENT="gouk_oracle@standardlife.com"
+
+# Send email
+(
+  echo "To: ${RECIPIENT}"
+  echo "Subject: Today's Locked Accounts Report"
+  echo "MIME-Version: 1.0"
+  echo "Content-Type: text/html"
+  echo ""
+  echo "$MAIL_BODY"
+) | sendmail -t
+
+# Clean up temporary file
+rm -f "$REPORT_FILE"
