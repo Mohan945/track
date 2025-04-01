@@ -1,111 +1,109 @@
-#!/bin/bash
+#!/bin/ksh
 
-# Define paths
-LOG_DIR="/mount/PRODDBA/oracle_scripts/recert/leavers/test"
-HTML_REPORT="$LOG_DIR/user_audit_report_$(date '+%Y-%m-%d').html"
-EMAIL_RECIPIENT="gouk_oracle@standardlife.com"
+# Define file paths
+INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/employee_ids.txt"
+SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt"
+LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
+SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
+TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
+EMAIL_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/email_report.html"
 
-# Ensure log directory exists
-mkdir -p "$LOG_DIR"
+# Database credentials
+DB_USER="SYSTEM"
+DB_PASS="cowboy_1"
 
-# Database details (for testing one database)
-DB_TNS="CI01SYST"
+# Hardcoded list of databases
+DB_NAMES=("CI01SYST" "OA21SYST" "MI22SYST")  # Add your database names here
 
-# Clear previous report
-> "$HTML_REPORT"
+# Clear previous log and email file
+> "$LOG_FILE"
+> "$EMAIL_FILE"
 
-# Prompt for credentials securely
-read -p "Enter DB Username: " DB_USER
-read -s -p "Enter Password: " DB_PASS
-echo ""
+# Extract Employee IDs where Details contain specific keywords
+grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
 
-# Write HTML header
-cat <<EOF > "$HTML_REPORT"
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #cccccc; padding: 8px; text-align: left; }
-    th { background-color: #f2f2f2; }
-  </style>
-</head>
-<body>
-  <h2>ðŸš¨ Exadata Security Report - $(date '+%Y-%m-%d')</h2>
-  <p><strong>Database:</strong> $DB_TNS</p>
-EOF
+# Check if the SQL input file has Employee IDs
+if [ ! -s "$SQL_INPUT_FILE" ]; then
+    echo "[$(date)] No matching Employee IDs found. Exiting." | tee -a "$LOG_FILE"
+    exit 1
+fi
 
-# Function to execute SQL query and append HTML table rows
-run_sql_html() {
-    local title="$1"
-    local query="$2"
+# Start HTML table in email report
+echo "<table border='1' cellpadding='5' cellspacing='0'>" >> "$EMAIL_FILE"
+echo "<tr><th>Database</th><th>Locked User</th></tr>" >> "$EMAIL_FILE"
 
-    echo "<h3>$title</h3>" >> "$HTML_REPORT"
-    echo "<table>" >> "$HTML_REPORT"
-    echo "<tr><th>USERNAME</th><th>TIMESTAMP</th><th>STATUS</th></tr>" >> "$HTML_REPORT"
+# Process each database in the predefined list
+for DB_NAME in "${DB_NAMES[@]}"; do
+    echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
 
-    # Execute the query and spool output to a temporary file
-    TMP_FILE="$LOG_DIR/tmp_output.txt"
-    rm -f "$TMP_FILE"
-    
-    sqlplus -s /nolog <<EOF > "$TMP_FILE" 2>/dev/null
-CONNECT $DB_USER/$DB_PASS@$DB_TNS
-SET HEAD OFF;
-SET FEEDBACK OFF;
-SET PAGESIZE 500;
-SET LINESIZE 500;
-SET TRIMSPOOL ON;
-SET COLSEP '|';
-$query
+    # Check if the database exists in the TNS file
+    grep -q -w "$DB_NAME" "$TNS_FILE"
+    if [ $? -ne 0 ]; then
+        echo "[$(date)] Database $DB_NAME not found in TNS file. Skipping." | tee -a "$LOG_FILE"
+        continue
+    fi
+
+    # Build the SQL script dynamically
+    > "$SQL_SCRIPT"
+    echo "SET SERVEROUTPUT ON;" >> "$SQL_SCRIPT"
+    echo "SPOOL $LOG_FILE APPEND;" >> "$SQL_SCRIPT"
+    echo "DECLARE" >> "$SQL_SCRIPT"
+    echo "  v_user_found NUMBER := 0;" >> "$SQL_SCRIPT"
+    echo "BEGIN" >> "$SQL_SCRIPT"
+
+    while read EMP_ID; do
+        if [ -n "$EMP_ID" ]; then
+            echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
+            echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
+            echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
+            echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
+            echo "  END LOOP;" >> "$SQL_SCRIPT"
+        fi
+    done < "$SQL_INPUT_FILE"
+
+    echo "  IF v_user_found = 0 THEN" >> "$SQL_SCRIPT"
+    echo "    DBMS_OUTPUT.PUT_LINE('No matching users found to lock.');" >> "$SQL_SCRIPT"
+    echo "  END IF;" >> "$SQL_SCRIPT"
+    echo "END;" >> "$SQL_SCRIPT"
+    echo "/" >> "$SQL_SCRIPT"
+    echo "SPOOL OFF;" >> "$SQL_SCRIPT"
+    echo "EXIT;" >> "$SQL_SCRIPT"   # Ensures SQL*Plus exits after execution
+
+    # Execute SQL script and capture the exit status
+    sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
+    SQL_EXIT_CODE=${PIPESTATUS[0]}
+
+    if [ "$SQL_EXIT_CODE" -eq 0 ] || [ "$SQL_EXIT_CODE" -eq 2 ]; then
+        echo "[$(date)] Successfully processed database: $DB_NAME" | tee -a "$LOG_FILE"
+    else
+        echo "[$(date)] Critical error processing database: $DB_NAME (Exit Code: $SQL_EXIT_CODE)" | tee -a "$LOG_FILE"
+    fi
+
+    # Insert a blank line between databases in the log
+    echo "" | tee -a "$LOG_FILE"
+
+    # Fetch today's locked users
+    LOCKED_USERS=$(sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" <<EOF
+SET HEADING OFF
+SET FEEDBACK OFF
+SELECT username FROM dba_users WHERE ACCOUNT_STATUS='LOCKED' AND LOCK_DATE >= TRUNC(SYSDATE);
 EXIT;
 EOF
+)
 
-    # Read the temporary file and output each row as an HTML table row.
-    while IFS='|' read -r col1 col2 col3; do
-      # Only add the row if there's content
-      if [ -n "$col1" ]; then
-          echo "<tr><td>$col1</td><td>$col2</td><td>$col3</td></tr>" >> "$HTML_REPORT"
-      fi
-    done < "$TMP_FILE"
-    
-    echo "</table><br>" >> "$HTML_REPORT"
-    rm -f "$TMP_FILE"
-}
+    # If there are locked users, add them to the email report
+    if [ -n "$LOCKED_USERS" ]; then
+        for USER in $LOCKED_USERS; do
+            echo "<tr><td>$DB_NAME</td><td>$USER</td></tr>" >> "$EMAIL_FILE"
+        done
+    fi
 
-# Run queries with HTML formatting
+done
 
-run_sql_html "ðŸ”’ Locked Users (Today)" \
-"SELECT USERNAME || '|' || TO_CHAR(LOCK_DATE, 'YYYY-MM-DD HH24:MI:SS') || '|' || 'User locked today'
- FROM DBA_USERS 
- WHERE ACCOUNT_STATUS LIKE 'LOCKED%' 
-   AND LOCK_DATE >= TRUNC(SYSDATE);"
+# Close the HTML table in email report
+echo "</table>" >> "$EMAIL_FILE"
 
-run_sql_html "ðŸš« Failed Login Attempts (Last 24 Hours)" \
-"SELECT USERNAME || '|' || TO_CHAR(TIMESTAMP, 'YYYY-MM-DD HH24:MI:SS') || '|' || 'Failed Login'
- FROM DBA_AUDIT_SESSION 
- WHERE ACTION_NAME = 'LOGON'
-   AND TIMESTAMP >= SYSDATE - 1;"
+# Send the email
+mailx -s "Today's Locked User Accounts" -a "Content-type: text/html" recipient@example.com < "$EMAIL_FILE"
 
-run_sql_html "â³ Users with Expiring Passwords (Next 7 Days)" \
-"SELECT USERNAME || '|' || TO_CHAR(EXPIRY_DATE, 'YYYY-MM-DD') || '|' || 'Expiring Soon'
- FROM DBA_USERS 
- WHERE EXPIRY_DATE <= SYSDATE + 7;"
-
-run_sql_html "ðŸ›‘ Inactive Accounts (No Login in 90+ Days)" \
-"SELECT USERNAME || '|' || TO_CHAR(LAST_LOGIN, 'YYYY-MM-DD HH24:MI:SS') || '|' || 'Inactive Account'
- FROM DBA_USERS 
- WHERE LAST_LOGIN < SYSDATE - 90;"
-
-run_sql_html "ðŸ”‘ Users with Excessive Privileges" \
-"SELECT GRANTEE || '|' || 'N/A' || '|' || PRIVILEGE
- FROM DBA_SYS_PRIVS 
- WHERE PRIVILEGE IN ('DBA', 'SYSDBA');"
-
-# Write HTML footer and close document
-echo "</body></html>" >> "$HTML_REPORT"
-
-# Send the HTML email (the -a option adds a header for content-type)
-mail -a "Content-Type: text/html" -s "ðŸš¨ Exadata Security Report - $(date '+%Y-%m-%d')" "$EMAIL_RECIPIENT" < "$HTML_REPORT"
-
-echo "HTML report sent to $EMAIL_RECIPIENT"
-
+echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
