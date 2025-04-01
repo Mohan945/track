@@ -15,6 +15,10 @@ DB_PASS="cowboy_1"
 # Clear previous log file
 > "$LOG_FILE"
 
+# Clean up db_list.txt to remove empty lines and unwanted characters
+sed -i '/^\s*$/d' "$DB_LIST"  # Remove blank lines
+dos2unix "$DB_LIST" 2>/dev/null  # Fix potential Windows carriage returns
+
 # Extract Employee IDs where Details contain specific keywords
 grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
 
@@ -25,7 +29,7 @@ if [ ! -s "$SQL_INPUT_FILE" ]; then
 fi
 
 # Process each database in the predefined list
-while IFS= read -r DB_NAME; do
+while IFS= read -r DB_NAME || [ -n "$DB_NAME" ]; do  # Ensure last line is processed
     echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
 
     # Check if the database exists in the TNS file
@@ -44,11 +48,13 @@ while IFS= read -r DB_NAME; do
     echo "BEGIN" >> "$SQL_SCRIPT"
 
     while read EMP_ID; do
-        echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
-        echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
-        echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
-        echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
-        echo "  END LOOP;" >> "$SQL_SCRIPT"
+        if [ -n "$EMP_ID" ]; then  # Ensure EMP_ID is not empty
+            echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
+            echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
+            echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
+            echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
+            echo "  END LOOP;" >> "$SQL_SCRIPT"
+        fi
     done < "$SQL_INPUT_FILE"
 
     echo "  IF v_user_found = 0 THEN" >> "$SQL_SCRIPT"
@@ -71,16 +77,3 @@ while IFS= read -r DB_NAME; do
 done < "$DB_LIST"
 
 echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
-
-getting below error
-
-[Mon Mar 31 14:49:44 BST 2025] Processing database: CI01SYST
-Locking user: CO70989
-Locking user: CO70000_CUST
-
-PL/SQL procedure successfully completed.
-
-SP2-0042: unknown command "OA21SYST" - rest of line ignored.
-SP2-0042: unknown command "MI22SYST" - rest of line ignored.
-[Mon Mar 31 14:49:45 BST 2025] Successfully processed database: CI01SYST
-[Mon Mar 31 14:49:45 BST 2025] Locking process completed.
