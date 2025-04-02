@@ -122,3 +122,29 @@ for DB_NAME in "${DB_NAMES[@]}"; do
 done
 
 echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
+
+[Wed Apr  2 10:47:00 BST 2025] Processing database: EB21PROD
+[Wed Apr  2 10:47:00 BST 2025] Extracted CONN_STR: EB21
+[Wed Apr  2 10:47:00 BST 2025] Extracted ORACLE_HOME: /u01/app/oracle/product/11.2.0.3.28/ebsprod
+[Wed Apr  2 10:47:00 BST 2025] Set ORACLE_HOME: /u01/app/oracle/product/11.2.0.3.28/ebsprod
+ERROR:
+ORA-12154: TNS:could not resolve the connect identifier specified
+
+
+
+ERROR:
+ORA-12162: TNS:net service name is incorrectly specified
+
+
+
+ERROR:
+ORA-12162: TNS:net service name is incorrectly specified
+
+
+SP2-0157: unable to CONNECT to ORACLE after 3 attempts, exiting SQL*Plus
+[Wed Apr  2 10:47:12 BST 2025] Successfully processed database: EB21PROD
+
+[Wed Apr  2 10:47:12 BST 2025] Locking process completed.
+
+
+This script is working fine for all db's except one DB it is a rac db I have checked the tns entry and service name everything is correct please let me know what is the issue of this error
