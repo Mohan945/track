@@ -1,41 +1,49 @@
-[oracle@exa7dbadm01: test]$ vi lock_users.log
-[Wed Apr  2 11:38:43 BST 2025] Extracted CONN_STR: EB21
-[Wed Apr  2 11:38:43 BST 2025] Extracted ORACLE_HOME: /u01/app/oracle/product/11.2.0.3.28/ebsprod
-[Wed Apr  2 11:38:43 BST 2025] Set ORACLE_SID: EB21PROD2
+#!/bin/ksh
 
-TNS Ping Utility for Linux: Version 11.2.0.3.0 - Production on 02-APR-2025 11:38:43
+LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
+REPORT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_report.html"
+EMAIL_RECIPIENTS="security_team@example.com"
 
-Copyright (c) 1997, 2011, Oracle.  All rights reserved.
+# Clear previous report
+> "$REPORT_FILE"
 
-Used parameter files:
+# Variables
+declare -A LOCKED_USERS
+CURRENT_DB=""
 
+# Process the log file
+while read -r line; do
+    if [[ $line == *"USER_LOCKED:"* ]]; then
+        DB_NAME=$(echo "$line" | awk -F'IN_DB: ' '{print $2}')
+        USERNAME=$(echo "$line" | awk -F'USER_LOCKED: ' '{print $2}' | awk '{print $1}')
+        LOCKED_USERS["$DB_NAME"]+="$USERNAME,"
+    fi
+done < "$LOG_FILE"
 
-Used TNSNAMES adapter to resolve the alias
-Attempting to contact (DESCRIPTION=(CONNECT_TIMEOUT=5)(TRANSPORT_CONNECT_TIMEOUT=3)(RETRY_COUNT=2)(ADDRESS_LIST=(LOAD_BALANCE=OFF)(FAILOVER=ON)(ADDRESS=(PROTOCOL=TCP)(HOST=obiee_ebs_src_prod.corp.standardlife.com)(PORT=1521))(ADDRESS=(PROTOCOL=TCP)(HOST=exa8-scan1.corp.standardlife.com)(PORT=1521))(ADDRESS=(PROTOCOL=TCP)(HOST=exa7-scan1.corp.standardlife.com)(PORT=1521)))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=EB21PROD.world)))
-OK (10 msec)
-No matching users found to lock.
-No matching users found to lock.
-[Wed Apr  2 11:38:43 BST 2025] Successfully processed database: EB21PROD
+# Start HTML formatting
+echo "<html><body>" > "$REPORT_FILE"
 
-[Wed Apr  2 11:38:43 BST 2025] Processing database: WT23PROD
-[Wed Apr  2 11:38:43 BST 2025] Extracted CONN_STR: WT23
-[Wed Apr  2 11:38:43 BST 2025] Extracted ORACLE_HOME: /u01/app/oracle/product/12.2.0.1/dbhome_1
-[Wed Apr  2 11:38:43 BST 2025] Set ORACLE_SID:
+if [ ${#LOCKED_USERS[@]} -eq 0 ]; then
+    echo "<h3>No users got locked today.</h3>" >> "$REPORT_FILE"
+else
+    echo "<h3>Locked Users Report</h3>" >> "$REPORT_FILE"
+    echo "<table border='1' cellspacing='0' cellpadding='5'>" >> "$REPORT_FILE"
+    echo "<tr><th>Database</th><th>Locked Users</th></tr>" >> "$REPORT_FILE"
 
-TNS Ping Utility for Linux: Version 12.2.0.1.0 - Production on 02-APR-2025 11:38:43
+    for DB in "${!LOCKED_USERS[@]}"; do
+        USER_LIST=$(echo "${LOCKED_USERS[$DB]}" | sed 's/,$//')  # Remove trailing comma
+        echo "<tr><td>$DB</td><td>$USER_LIST</td></tr>" >> "$REPORT_FILE"
+    done
 
-Copyright (c) 1997, 2016, Oracle.  All rights reserved.
+    echo "</table>" >> "$REPORT_FILE"
+fi
 
-Used parameter files:
-/u01/app/oracle/product/12.2.0.1/dbhome_1/network/admin/sqlnet.ora
+echo "</body></html>" >> "$REPORT_FILE"
 
-
-Used TNSNAMES adapter to resolve the alias
-Attempting to contact (DESCRIPTION=(CONNECT_TIMEOUT=5)(TRANSPORT_CONNECT_TIMEOUT=3)(RETRY_COUNT=2)(ADDRESS_LIST=(LOAD_BALANCE=OFF)(FAILOVER=ON)(ADDRESS=(PROTOCOL=TCP)(HOST=WT23_Watchlist_PROD.corp.standardlife.com)(PORT=1521))(ADDRESS=(PROTOCOL=TCP)(HOST=exa8-scan1.corp.standardlife.com)(PORT=1521))(ADDRESS=(PROTOCOL=TCP)(HOST=exa7-scan1.corp.standardlife.com)(PORT=1521)))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=WT23PROD.world)))
-OK (0 msec)
-No matching users found to lock.
-No matching users found to lock.
-[Wed Apr  2 11:38:43 BST 2025] Successfully processed database: WT23PROD
-
-[Wed Apr  2 11:38:43 BST 2025] Locking process completed.
-
+# Send the email
+/usr/sbin/sendmail -t <<EOF
+To: $EMAIL_RECIPIENTS
+Subject: Oracle User Locking Report
+Content-Type: text/html
+$(cat "$REPORT_FILE")
+EOF
