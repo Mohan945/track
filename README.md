@@ -1,22 +1,22 @@
 #!/bin/ksh
+####################################
+# Locking Process with Dynamic Env #
+####################################
 
-#########################
-# Locking Process Start #
-#########################
-
-# Define file paths
+# Define file paths (using the same files as the original helpdesk script)
 INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/employee_ids.txt"
 SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt"
 LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
 SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
-TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
+# Use the corporate TNS file path as in the helpdesk script
+TNS_FILE="/oem/oracle/admin/network/tnsnames.ora"
 
 # Database credentials
 DB_USER="SYSTEM"
 DB_PASS="cowboy_1"
 
-# Hardcoded list of databases
-DB_NAMES=("CI01SYST" "OA21SYST" "MI22SYST")  # Add your database names here
+# Hardcoded list of databases to process
+DB_NAMES=("CI01SYST" "OA21SYST" "MI22SYST")  # Replace or extend as needed
 
 # Clear previous log file
 > "$LOG_FILE"
@@ -41,7 +41,34 @@ for DB_NAME in "${DB_NAMES[@]}"; do
         continue
     fi
 
-    # Build the SQL script dynamically for locking accounts
+    #############################################
+    # Dynamic Environment Setup (like helpdesk) #
+    #############################################
+    # Derive a connection prefix from the DB name (first 4 characters)
+    CONN_STR=`echo $DB_NAME | cut -c 1-4`
+
+    # Use /home/sysadmin/all_inst_nonDataGuard_Y to determine the current client version
+    Current_Client=`egrep "$CONN_STR" /home/sysadmin/all_inst_nonDataGuard_Y | awk 'BEGIN { FS=":" } {print $2}'`
+    # Determine the Oracle client based on version
+    case "$Current_Client" in
+        "v12.2.0.1"|"v19.0.0.0")
+            export ORACLE_SID=CLIENT_19C
+            ;;
+        *)
+            export ORACLE_SID=CLIENT_10G
+            ;;
+    esac
+
+    # Export additional environment variables and load the Oracle environment via oraenv
+    export PATH=${PATH}:/usr/local/bin
+    export ORAENV_ASK=NO
+    . oraenv > /dev/null 2>&1
+
+    echo "[$(date)] Environment set: ORACLE_HOME=$ORACLE_HOME, ORACLE_SID=$ORACLE_SID" | tee -a "$LOG_FILE"
+
+    #############################################
+    # Build the SQL script dynamically          #
+    #############################################
     > "$SQL_SCRIPT"
     echo "SET SERVEROUTPUT ON;" >> "$SQL_SCRIPT"
     echo "SPOOL $LOG_FILE APPEND;" >> "$SQL_SCRIPT"
@@ -65,10 +92,12 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     echo "END;" >> "$SQL_SCRIPT"
     echo "/" >> "$SQL_SCRIPT"
     echo "SPOOL OFF;" >> "$SQL_SCRIPT"
-    echo "EXIT;" >> "$SQL_SCRIPT"   # Ensures SQL*Plus exits after execution
+    echo "EXIT;" >> "$SQL_SCRIPT"
 
-    # Execute SQL script and capture the exit status
-
+    #####################################################
+    # Execute SQL script using dynamically created env #
+    #####################################################
+    # Here we use $DB_NAME as the connect string (since it’s verified in the TNS file)
     sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
     SQL_EXIT_CODE=${PIPESTATUS[0]}
 
