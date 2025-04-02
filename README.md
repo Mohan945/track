@@ -63,6 +63,8 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     export PATH=${PATH}:/usr/local/bin
     export ORAENV_ASK=NO
     . oraenv > /dev/null 2>&1
+    # Explicitly update PATH to include the sqlplus binary directory
+    export PATH="$ORACLE_HOME/bin:$PATH"
 
     echo "[$(date)] Environment set: ORACLE_HOME=$ORACLE_HOME, ORACLE_SID=$ORACLE_SID" | tee -a "$LOG_FILE"
 
