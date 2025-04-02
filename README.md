@@ -2,7 +2,7 @@
 ####################################
 # Locking Process with Dynamic Env #
 # SCRIPT : Leavers_Automated
-# VERSION : 002
+# VERSION : 003
 # AUTHOR : Mohan T (CO70989)
 # DATE : 2nd April 2025
 # PURPOSE : Lock users as part of daily Leavers/Movers process
@@ -15,10 +15,18 @@ LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
 SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
 TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
 DB_ENV_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/all_inst_nonDataGuard_Y"
+DB_CRED_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/db_credentials.txt"
 
 # Database credentials
 DB_USER="DBSNMP"
-DB_PASS="c0mplacent"
+
+# Securely read the database password from an external file
+if [ ! -f "$DB_CRED_FILE" ]; then
+    echo "[$(date)] ERROR: Credential file not found: $DB_CRED_FILE" | tee -a "$LOG_FILE"
+    exit 1
+fi
+
+DB_PASS=$(cat "$DB_CRED_FILE" | tr -d '[:space:]')  # Remove any accidental spaces/newlines
 
 # List of databases to process
 DB_NAMES=("CI01PROD" "MI22PROD" "EB21PROD" "WT23PROD")
@@ -136,5 +144,3 @@ EOF
 done
 
 echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
-
-I want to give password in seperate file
