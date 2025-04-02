@@ -3,19 +3,19 @@
 # Locking Process with Dynamic Env #
 ####################################
 
-# Define file paths (same as helpdesk script)
+# Define file paths
 INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/employee_ids.txt"
 SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt"
 LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
 SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
 TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
-DB_HOME_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/all_inst_nonDataGuard_Y"
+DB_ENV_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/all_inst_nonDataGuard_Y"
 
 # Database credentials
 DB_USER="SYSTEM"
 DB_PASS="cowboy_1"
 
-# Hardcoded list of databases to process
+# List of databases to process
 DB_NAMES=("CI01SYST" "OA21SYST" "MI22SYST")  # Extend as needed
 
 # Clear previous log file
@@ -24,13 +24,13 @@ DB_NAMES=("CI01SYST" "OA21SYST" "MI22SYST")  # Extend as needed
 # Extract Employee IDs where Details contain specific keywords
 grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
 
-# Check if the SQL input file has Employee IDs
+# Check if Employee IDs exist
 if [ ! -s "$SQL_INPUT_FILE" ]; then
     echo "[$(date)] No matching Employee IDs found. Exiting." | tee -a "$LOG_FILE"
     exit 1
 fi
 
-# Process each database for locking accounts
+# Process each database
 for DB_NAME in "${DB_NAMES[@]}"; do
     echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
 
@@ -42,44 +42,24 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     fi
 
     #############################################
-    # Dynamic Environment Setup for ORACLE_HOME #
+    # Dynamic ORACLE_HOME Selection            #
     #############################################
-    
-    # Extract the first 4 characters from DB_NAME to match DB_HOME_FILE entry
     CONN_STR=`echo $DB_NAME | cut -c 1-4`
-    
-    # Extract the Oracle version from DB_HOME_FILE
-    ORACLE_VERSION=`awk -F ":" -v db="$CONN_STR" '$1 == db {print $2}' "$DB_HOME_FILE"`
-    
-    # Find the corresponding ORACLE_HOME dynamically
-    case "$ORACLE_VERSION" in
-        "19.0.0.0")
-            export ORACLE_HOME=`find /u01/app/oracle/product -maxdepth 2 -type d -name "19.0.0.0" | head -n 1`
-            ;;
-        "12.2.0.1")
-            export ORACLE_HOME=`find /u01/app/oracle/product -maxdepth 2 -type d -name "12.2.0.1" | head -n 1`
-            ;;
-        *)
-            echo "[$(date)] Unknown Oracle version for $DB_NAME. Skipping." | tee -a "$LOG_FILE"
-            continue
-            ;;
-    esac
+    ORACLE_HOME=$(awk -F: -v db="$CONN_STR" '$1 == db {print $2}' "$DB_ENV_FILE")
 
-    # Ensure ORACLE_HOME is set
     if [ -z "$ORACLE_HOME" ]; then
-        echo "[$(date)] ORACLE_HOME not found for version $ORACLE_VERSION. Skipping database: $DB_NAME." | tee -a "$LOG_FILE"
+        echo "[$(date)] No ORACLE_HOME found for $DB_NAME. Skipping." | tee -a "$LOG_FILE"
         continue
     fi
 
+    export ORACLE_HOME
     export PATH="$ORACLE_HOME/bin:$PATH"
-    export LD_LIBRARY_PATH="$ORACLE_HOME/lib"
-    export ORACLE_SID="$DB_NAME"
+    
+    echo "[$(date)] Set ORACLE_HOME: $ORACLE_HOME" | tee -a "$LOG_FILE"
 
-    echo "[$(date)] Environment set: ORACLE_HOME=$ORACLE_HOME, ORACLE_SID=$ORACLE_SID" | tee -a "$LOG_FILE"
-
-    # Verify sqlplus is accessible
-    if ! command -v sqlplus >/dev/null 2>&1; then
-        echo "[$(date)] sqlplus not found for $DB_NAME. Skipping." | tee -a "$LOG_FILE"
+    # Verify sqlplus exists
+    if ! command -v sqlplus > /dev/null; then
+        echo "[$(date)] sqlplus not found in $ORACLE_HOME. Skipping." | tee -a "$LOG_FILE"
         continue
     fi
 
@@ -111,20 +91,18 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     echo "SPOOL OFF;" >> "$SQL_SCRIPT"
     echo "EXIT;" >> "$SQL_SCRIPT"
 
-    #####################################################
-    # Execute SQL script using dynamically created env #
-    #####################################################
+    #############################################
+    # Execute SQL script                        #
+    #############################################
     sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
     SQL_EXIT_CODE=${PIPESTATUS[0]}
 
-    # Allow exit codes 0 (success) and 2 (minor warnings)
     if [ "$SQL_EXIT_CODE" -eq 0 ] || [ "$SQL_EXIT_CODE" -eq 2 ]; then
         echo "[$(date)] Successfully processed database: $DB_NAME" | tee -a "$LOG_FILE"
     else
-        echo "[$(date)] Critical error processing database: $DB_NAME (Exit Code: $SQL_EXIT_CODE)" | tee -a "$LOG_FILE"
+        echo "[$(date)] Error processing database: $DB_NAME (Exit Code: $SQL_EXIT_CODE)" | tee -a "$LOG_FILE"
     fi
 
-    # Insert a blank line between databases in the log
     echo "" | tee -a "$LOG_FILE"
 done
 
