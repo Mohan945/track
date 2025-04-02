@@ -1,58 +1,140 @@
 #!/bin/ksh
+####################################
+# Locking Process with Dynamic Env #
+# SCRIPT : Leavers_Automated
+# VERSION : 002
+# AUTHOR : Mohan T (CO70989)
+# DATE : 2nd April 2025
+# PURPOSE : Lock users as part of daily Leavers/Movers process
+####################################
 
+# Define file paths
+INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/employee_ids.txt"
+SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt"
 LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
-REPORT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_report.html"
-EMAIL_RECIPIENTS="security_team@example.com"
+SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
+TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
+DB_ENV_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/all_inst_nonDataGuard_Y"
 
-# Clear previous report
-> "$REPORT_FILE"
+# Database credentials
+DB_USER="DBSNMP"
+DB_PASS="c0mplacent"
 
-# Temporary file to store results
-TEMP_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/locked_users.tmp"
-> "$TEMP_FILE"
+# List of databases to process
+DB_NAMES=("CI01PROD" "MI22PROD" "EB21PROD" "WT23PROD")
 
-# Process the log file to extract locked users
-CURRENT_DB=""
-USER_LOCKED=0
+# Clear previous log file
+> "$LOG_FILE"
 
-while read -r line; do
-    if [[ $line == *"Processing database:"* ]]; then
-        CURRENT_DB=$(echo "$line" | awk '{print $NF}')
-    elif [[ $line == *"Locking user:"* ]]; then
-        USERNAME=$(echo "$line" | awk '{print $NF}')
-        echo "$CURRENT_DB|$USERNAME" >> "$TEMP_FILE"
-        USER_LOCKED=1
-    fi
-done < "$LOG_FILE"
+# Extract Employee IDs where Details contain specific keywords
+grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
 
-# Start HTML formatting
-echo "<html><body>" > "$REPORT_FILE"
-
-if [ "$USER_LOCKED" -eq 0 ]; then
-    echo "<h3>No users got locked today.</h3>" >> "$REPORT_FILE"
-else
-    echo "<h3>Locked Users Report</h3>" >> "$REPORT_FILE"
-    echo "<table border='1' cellspacing='0' cellpadding='5'>" >> "$REPORT_FILE"
-    echo "<tr><th>Database</th><th>Locked Users</th></tr>" >> "$REPORT_FILE"
-
-    # Sort and process unique databases
-    awk -F'|' '{print $1}' "$TEMP_FILE" | sort -u | while read -r DB_NAME; do
-        USERS=$(awk -F'|' -v db="$DB_NAME" '$1 == db {print $2}' "$TEMP_FILE" | paste -sd ", " -)
-        echo "<tr><td>$DB_NAME</td><td>$USERS</td></tr>" >> "$REPORT_FILE"
-    done
-
-    echo "</table>" >> "$REPORT_FILE"
+# Check if Employee IDs exist
+if [ ! -s "$SQL_INPUT_FILE" ]; then
+    echo "[$(date)] No matching Employee IDs found. Exiting." | tee -a "$LOG_FILE"
+    exit 1
 fi
 
-echo "</body></html>" >> "$REPORT_FILE"
+# Process each database
+for DB_NAME in "${DB_NAMES[@]}"; do
+    echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
 
-# Send the email
-/usr/sbin/sendmail -t <<EOF
-To: $EMAIL_RECIPIENTS
-Subject: Oracle User Locking Report
-Content-Type: text/html
-$(cat "$REPORT_FILE")
+    # Check if database exists in TNS file
+    if ! grep -q -w "$DB_NAME" "$TNS_FILE"; then
+        echo "[$(date)] Database $DB_NAME not found in TNS file. Skipping." | tee -a "$LOG_FILE"
+        continue
+    fi
+
+    #############################################
+    # Dynamic ORACLE_HOME & ORACLE_SID Selection#
+    #############################################
+
+    # Extract database prefix (first 4 characters)
+    CONN_STR=$(echo "$DB_NAME" | cut -c 1-4)
+
+    # Extract ORACLE_HOME from environment file
+    ORACLE_HOME=$(awk -F: -v db="$CONN_STR" '$1 == db {print $2}' "$DB_ENV_FILE")
+
+    # Debugging logs
+    echo "[$(date)] Extracted CONN_STR: $CONN_STR" | tee -a "$LOG_FILE"
+    echo "[$(date)] Extracted ORACLE_HOME: $ORACLE_HOME" | tee -a "$LOG_FILE"
+
+    # Validate ORACLE_HOME
+    if [ -z "$ORACLE_HOME" ] || [ ! -d "$ORACLE_HOME" ]; then
+        echo "[$(date)] No valid ORACLE_HOME found for $DB_NAME. Skipping." | tee -a "$LOG_FILE"
+        continue
+    fi
+
+    export ORACLE_HOME
+    export PATH="$ORACLE_HOME/bin:$PATH"
+
+    # Set TNS_ADMIN to the correct directory
+    export TNS_ADMIN="/mount/PRODDBA/oracle_scripts/recert/leavers/test"
+
+    # Extract ORACLE_SID dynamically for RAC
+    export ORACLE_SID=$(ps -ef | grep pmon | grep -i "$DB_NAME" | awk -F_ '{print $3}')
+    echo "[$(date)] Set ORACLE_SID: $ORACLE_SID" | tee -a "$LOG_FILE"
+
+    # Verify sqlplus exists
+    if ! command -v sqlplus > /dev/null; then
+        echo "[$(date)] sqlplus not found in $ORACLE_HOME. Skipping." | tee -a "$LOG_FILE"
+        continue
+    fi
+
+    # Test connection using tnsping
+    tnsping "$DB_NAME" | tee -a "$LOG_FILE"
+
+    #############################################
+    # Build the SQL script dynamically          #
+    #############################################
+    > "$SQL_SCRIPT"
+    echo "SET SERVEROUTPUT ON;" >> "$SQL_SCRIPT"
+    echo "SPOOL $LOG_FILE APPEND;" >> "$SQL_SCRIPT"
+    echo "DECLARE" >> "$SQL_SCRIPT"
+    echo "  v_user_found NUMBER := 0;" >> "$SQL_SCRIPT"
+    echo "BEGIN" >> "$SQL_SCRIPT"
+
+    while read EMP_ID; do
+        if [ -n "$EMP_ID" ]; then
+            echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
+            echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
+            echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
+            echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
+            echo "  END LOOP;" >> "$SQL_SCRIPT"
+        fi
+    done < "$SQL_INPUT_FILE"
+
+    echo "  IF v_user_found = 0 THEN" >> "$SQL_SCRIPT"
+    echo "    DBMS_OUTPUT.PUT_LINE('No matching users found to lock.');" >> "$SQL_SCRIPT"
+    echo "  END IF;" >> "$SQL_SCRIPT"
+    echo "END;" >> "$SQL_SCRIPT"
+    echo "/" >> "$SQL_SCRIPT"
+    echo "SPOOL OFF;" >> "$SQL_SCRIPT"
+    echo "EXIT;" >> "$SQL_SCRIPT"
+
+    #############################################
+    # Execute SQL script Securely (Hides Passwords) #
+    #############################################
+    sqlplus -s /nolog <<EOF | tee -a "$LOG_FILE"
+    CONNECT $DB_USER/$DB_PASS@$DB_NAME
+    SET SERVEROUTPUT ON;
+    SET HEADING OFF;
+    SET FEEDBACK OFF;
+    @$SQL_SCRIPT
+    EXIT;
 EOF
 
-# Cleanup temp file
-rm -f "$TEMP_FILE"
+    SQL_EXIT_CODE=${PIPESTATUS[0]}
+
+    if [ "$SQL_EXIT_CODE" -eq 0 ] || [ "$SQL_EXIT_CODE" -eq 2 ]; then
+        echo "[$(date)] Successfully processed database: $DB_NAME" | tee -a "$LOG_FILE"
+    else
+        echo "[$(date)] Error processing database: $DB_NAME (Exit Code: $SQL_EXIT_CODE)" | tee -a "$LOG_FILE"
+    fi
+
+    echo "" | tee -a "$LOG_FILE"
+done
+
+echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
+
+I want to give password in seperate file
