@@ -1,29 +1,25 @@
 #!/bin/ksh
 ####################################
-# Locking Process with Dynamic Env #
-# SCRIPT : Leavers_Automated
-# VERSION : 001
-# Original AUTHOR : Mohan T (CO70989)
+# Locking Users - EB21PROD Only    #
+# SCRIPT : Leavers_Automated_EB21  #
+# VERSION : 002
+# AUTHOR : Mohan T (CO70989)
 # DATE : 2nd April 2025
-# PURPOSE :  This Script will lock the users as part of daily Leavers/Movers
-# FILES Referred: TNS_ADMIN="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora" | /mount/PRODDBA/oracle_scripts/recert/leavers/test/all_inst_nonDataGuard_Y
-# ALTERED: NA
+# PURPOSE : Lock users in EB21PROD DB #
 ####################################
 
-# Define file paths
+# Define Paths
 INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/employee_ids.txt"
 SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt"
-LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
-SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
+LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users_EB21.log"
+SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_EB21.sql"
 TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
 DB_ENV_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/all_inst_nonDataGuard_Y"
 
 # Database credentials
 DB_USER="DBSNMP"
 DB_PASS="c0mplacent"
-
-# List of databases to process
-DB_NAMES=("CI01PROD" "MI22PROD" "EB21PROD" "WT23PROD")  # Extend as needed
+DB_NAME="EB21PROD"  # EB21 Specific
 
 # Clear previous log file
 > "$LOG_FILE"
@@ -37,114 +33,103 @@ if [ ! -s "$SQL_INPUT_FILE" ]; then
     exit 1
 fi
 
-# Process each database
-for DB_NAME in "${DB_NAMES[@]}"; do
-    echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
+echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
 
-    # Check if the database exists in the TNS file
-    if ! grep -q -w "$DB_NAME" "$TNS_FILE"; then
-        echo "[$(date)] Database $DB_NAME not found in TNS file. Skipping." | tee -a "$LOG_FILE"
-        continue
+#############################################
+# Dynamic ORACLE_HOME Selection for EB21PROD
+#############################################
+
+# Extract ORACLE_HOME from environment file
+ORACLE_HOME=$(awk -F: -v db="EB21" '$1 == db {print $2}' "$DB_ENV_FILE")
+
+# Debugging logs
+echo "[$(date)] Extracted ORACLE_HOME: $ORACLE_HOME" | tee -a "$LOG_FILE"
+
+# Validate ORACLE_HOME
+if [ -z "$ORACLE_HOME" ] || [ ! -d "$ORACLE_HOME" ]; then
+    echo "[$(date)] No valid ORACLE_HOME found for $DB_NAME. Skipping." | tee -a "$LOG_FILE"
+    exit 1
+fi
+
+export ORACLE_HOME
+export PATH="$ORACLE_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$ORACLE_HOME/lib:$LD_LIBRARY_PATH"
+
+echo "[$(date)] Set ORACLE_HOME: $ORACLE_HOME" | tee -a "$LOG_FILE"
+
+# Set ORACLE_SID dynamically (for RAC compatibility)
+export ORACLE_SID=$(ps -ef | grep pmon | grep -i "EB21" | awk -F_ '{print $3}')
+
+# Check sqlplus
+if ! command -v sqlplus > /dev/null; then
+    echo "[$(date)] sqlplus not found in $ORACLE_HOME. Exiting." | tee -a "$LOG_FILE"
+    exit 1
+fi
+
+# Set correct TNS_ADMIN path
+export TNS_ADMIN="/mount/PRODDBA/oracle_scripts/recert/leavers/test"
+
+# Test connection with tnsping
+echo "[$(date)] Testing connection with tnsping..." | tee -a "$LOG_FILE"
+tnsping EB21PROD | tee -a "$LOG_FILE"
+
+#############################################
+# Build the SQL script dynamically
+#############################################
+> "$SQL_SCRIPT"
+echo "SET SERVEROUTPUT ON;" >> "$SQL_SCRIPT"
+echo "SPOOL $LOG_FILE APPEND;" >> "$SQL_SCRIPT"
+echo "DECLARE" >> "$SQL_SCRIPT"
+echo "  v_user_found NUMBER := 0;" >> "$SQL_SCRIPT"
+echo "BEGIN" >> "$SQL_SCRIPT"
+
+while read EMP_ID; do
+    if [ -n "$EMP_ID" ]; then
+        echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
+        echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
+        echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
+        echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
+        echo "  END LOOP;" >> "$SQL_SCRIPT"
     fi
+done < "$SQL_INPUT_FILE"
 
-    #############################################
-    # Dynamic ORACLE_HOME Selection            #
-    #############################################
+echo "  IF v_user_found = 0 THEN" >> "$SQL_SCRIPT"
+echo "    DBMS_OUTPUT.PUT_LINE('No matching users found to lock.');" >> "$SQL_SCRIPT"
+echo "  END IF;" >> "$SQL_SCRIPT"
+echo "END;" >> "$SQL_SCRIPT"
+echo "/" >> "$SQL_SCRIPT"
+echo "SPOOL OFF;" >> "$SQL_SCRIPT"
+echo "EXIT;" >> "$SQL_SCRIPT"
 
-    # Extract database prefix (first 4 characters)
-    CONN_STR=$(echo "$DB_NAME" | cut -c 1-4)
+#############################################
+# Execute SQL script (Using Multiple Methods)
+#############################################
 
-    # Extract ORACLE_HOME from environment file
-    ORACLE_HOME=$(awk -F: -v db="$CONN_STR" '$1 == db {print $2}' "$DB_ENV_FILE")
+# Option 1: Using TNS Name (Standard)
+echo "[$(date)] Connecting using TNS alias..." | tee -a "$LOG_FILE"
+sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
+SQL_EXIT_CODE=${PIPESTATUS[0]}
 
-    # Debugging logs
-    echo "[$(date)] Extracted CONN_STR: $CONN_STR" | tee -a "$LOG_FILE"
-    echo "[$(date)] Extracted ORACLE_HOME: $ORACLE_HOME" | tee -a "$LOG_FILE"
-
-    # Validate ORACLE_HOME
-    if [ -z "$ORACLE_HOME" ] || [ ! -d "$ORACLE_HOME" ]; then
-        echo "[$(date)] No valid ORACLE_HOME found for $DB_NAME. Skipping." | tee -a "$LOG_FILE"
-        continue
-    fi
-
-    export ORACLE_HOME
-    export PATH="$ORACLE_HOME/bin:$PATH"
-
-    echo "[$(date)] Set ORACLE_HOME: $ORACLE_HOME" | tee -a "$LOG_FILE"
-
-    # Verify sqlplus exists
-    if ! command -v sqlplus > /dev/null; then
-        echo "[$(date)] sqlplus not found in $ORACLE_HOME. Skipping." | tee -a "$LOG_FILE"
-        continue
-    fi
-
-    #############################################
-    # Build the SQL script dynamically          #
-    #############################################
-    > "$SQL_SCRIPT"
-    echo "SET SERVEROUTPUT ON;" >> "$SQL_SCRIPT"
-    echo "SPOOL $LOG_FILE APPEND;" >> "$SQL_SCRIPT"
-    echo "DECLARE" >> "$SQL_SCRIPT"
-    echo "  v_user_found NUMBER := 0;" >> "$SQL_SCRIPT"
-    echo "BEGIN" >> "$SQL_SCRIPT"
-
-    while read EMP_ID; do
-        if [ -n "$EMP_ID" ]; then
-            echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
-            echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
-            echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
-            echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
-            echo "  END LOOP;" >> "$SQL_SCRIPT"
-        fi
-    done < "$SQL_INPUT_FILE"
-
-    echo "  IF v_user_found = 0 THEN" >> "$SQL_SCRIPT"
-    echo "    DBMS_OUTPUT.PUT_LINE('No matching users found to lock.');" >> "$SQL_SCRIPT"
-    echo "  END IF;" >> "$SQL_SCRIPT"
-    echo "END;" >> "$SQL_SCRIPT"
-    echo "/" >> "$SQL_SCRIPT"
-    echo "SPOOL OFF;" >> "$SQL_SCRIPT"
-    echo "EXIT;" >> "$SQL_SCRIPT"
-
-    #############################################
-    # Execute SQL script                        #
-    #############################################
-    sqlplus -s "$DB_USER/$DB_PASS@$DB_NAME" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
+# Option 2: Using Full Connection String (If Option 1 Fails)
+if [ "$SQL_EXIT_CODE" -ne 0 ]; then
+    echo "[$(date)] TNS alias failed. Trying full connection string..." | tee -a "$LOG_FILE"
+    sqlplus -s "$DB_USER/$DB_PASS@\"(DESCRIPTION=(ADDRESS_LIST=(ADDRESS=(PROTOCOL=TCP)(HOST=rac-scan.example.com)(PORT=1521)))(CONNECT_DATA=(SERVICE_NAME=EB21PROD)))\"" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
     SQL_EXIT_CODE=${PIPESTATUS[0]}
+fi
 
-    if [ "$SQL_EXIT_CODE" -eq 0 ] || [ "$SQL_EXIT_CODE" -eq 2 ]; then
-        echo "[$(date)] Successfully processed database: $DB_NAME" | tee -a "$LOG_FILE"
-    else
-        echo "[$(date)] Error processing database: $DB_NAME (Exit Code: $SQL_EXIT_CODE)" | tee -a "$LOG_FILE"
-    fi
+# Option 3: Using EZCONNECT (If Both Fail)
+if [ "$SQL_EXIT_CODE" -ne 0 ]; then
+    echo "[$(date)] Full connection string failed. Trying EZCONNECT..." | tee -a "$LOG_FILE"
+    sqlplus -s "$DB_USER/$DB_PASS@rac-scan.example.com:1521/EB21PROD" @"$SQL_SCRIPT" | tee -a "$LOG_FILE"
+    SQL_EXIT_CODE=${PIPESTATUS[0]}
+fi
 
-    echo "" | tee -a "$LOG_FILE"
-done
+# Final Check
+if [ "$SQL_EXIT_CODE" -eq 0 ] || [ "$SQL_EXIT_CODE" -eq 2 ]; then
+    echo "[$(date)] Successfully processed database: $DB_NAME" | tee -a "$LOG_FILE"
+else
+    echo "[$(date)] Error processing database: $DB_NAME (Exit Code: $SQL_EXIT_CODE)" | tee -a "$LOG_FILE"
+fi
 
-echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
-
-[Wed Apr  2 10:47:00 BST 2025] Processing database: EB21PROD
-[Wed Apr  2 10:47:00 BST 2025] Extracted CONN_STR: EB21
-[Wed Apr  2 10:47:00 BST 2025] Extracted ORACLE_HOME: /u01/app/oracle/product/11.2.0.3.28/ebsprod
-[Wed Apr  2 10:47:00 BST 2025] Set ORACLE_HOME: /u01/app/oracle/product/11.2.0.3.28/ebsprod
-ERROR:
-ORA-12154: TNS:could not resolve the connect identifier specified
-
-
-
-ERROR:
-ORA-12162: TNS:net service name is incorrectly specified
-
-
-
-ERROR:
-ORA-12162: TNS:net service name is incorrectly specified
-
-
-SP2-0157: unable to CONNECT to ORACLE after 3 attempts, exiting SQL*Plus
-[Wed Apr  2 10:47:12 BST 2025] Successfully processed database: EB21PROD
-
-[Wed Apr  2 10:47:12 BST 2025] Locking process completed.
-
-
-This script is working fine for all db's except one DB it is a rac db I have checked the tns entry and service name everything is correct please let me know what is the issue of this error
+echo "[$(date)] Locking process completed for $DB_NAME." | tee -a "$LOG_FILE"
+exit 0
