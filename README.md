@@ -2,23 +2,24 @@
 ####################################
 # Locking Process with Dynamic Env #
 # SCRIPT : Leavers_Automated
-# VERSION : 003
-# AUTHOR : Mohan T (CO70989)
+# VERSION : 001
+# AUTHOR : Mohan Tippasamudram (CO70989)
 # DATE : 2nd April 2025
 # PURPOSE : Lock users as part of daily Leavers/Movers process
+# Working : This Script will generate a lock script that will be executed in all DB's to lock the users
 ####################################
 
 # Define file paths
-INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/employee_ids.txt"
-SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/filtered_ids.txt"
-LOG_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock_users.log"
-SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/recert/leavers/test/lock.sql"
-TNS_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/tnsnames.ora"
-DB_ENV_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/all_inst_nonDataGuard_Y"
-DB_CRED_FILE="/mount/PRODDBA/oracle_scripts/recert/leavers/test/db_credentials.txt"
+INPUT_FILE="/mount/PRODDBA/oracle_scripts/leavers/employee_ids.txt"
+SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/leavers/filtered_ids.txt"
+LOG_FILE="/mount/PRODDBA/oracle_scripts/leavers/lock_users.log"
+SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/leavers/lock.sql"
+TNS_FILE="/mount/PRODDBA/oracle_scripts/leavers/tnsnames.ora"
+DB_ENV_FILE="/mount/PRODDBA/oracle_scripts/leavers/all_inst_nonDataGuard_Y"
+DB_CRED_FILE="/mount/PRODDBA/oracle_scripts/leavers/db_credentials.txt"
 
 # Database credentials
-DB_USER="DBSNMP"
+DB_USER="SYSTEM"
 
 # Securely read the database password from an external file
 if [ ! -f "$DB_CRED_FILE" ]; then
@@ -29,7 +30,7 @@ fi
 DB_PASS=$(cat "$DB_CRED_FILE" | tr -d '[:space:]')  # Remove any accidental spaces/newlines
 
 # List of databases to process
-DB_NAMES=("CI01PROD" "MI22PROD" "EB21PROD" "WT23PROD")
+DB_NAMES=("QP25PROD" "AU42PROD" "BM23PROD" "CN03PROD" "CN23PROD" "CX21PROD" "DL21PROD" "FF01PROD" "GX21PROD" "MI22PROD" "OA21PROD" "RI22PROD" "TZ21PROD" "QP24PROD" "AU43PROD" "BM24PROD" "CD21PROD" "EB23PROD" "MI21PROD" "TZ23PROD" "WT21PROD" "WT22PROD" "BM41PROD" "AU41PROD" "BM21PROD" "CI01PROD" "GP22PROD" "IN05PROD" "KW21PROD" "RD02PROD" "RD23PROD" "SQ01PROD" "TZ02PROD" "WT23PROD" "RD24PROD" "EB21PROD" "EB37PROD")
 
 # Clear previous log file
 > "$LOG_FILE"
@@ -77,7 +78,7 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     export PATH="$ORACLE_HOME/bin:$PATH"
 
     # Set TNS_ADMIN to the correct directory
-    export TNS_ADMIN="/mount/PRODDBA/oracle_scripts/recert/leavers/test"
+    export TNS_ADMIN="/mount/PRODDBA/oracle_scripts/leavers"
 
     # Extract ORACLE_SID dynamically for RAC
     export ORACLE_SID=$(ps -ef | grep pmon | grep -i "$DB_NAME" | awk -F_ '{print $3}')
