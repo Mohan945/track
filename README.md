@@ -2,21 +2,25 @@
 ####################################
 # Locking Process with Dynamic Env #
 # SCRIPT : Leavers_Automated
-# VERSION : 001
+# VERSION : 005
 # AUTHOR : Mohan Tippasamudram (CO70989)
-# DATE : 2nd April 2025
+# DATE : 3rd April 2025
 # PURPOSE : Lock users as part of daily Leavers/Movers process
-# Working : This Script will generate a lock script that will be executed in all DB's to lock the users
 ####################################
 
 # Define file paths
 INPUT_FILE="/mount/PRODDBA/oracle_scripts/leavers/employee_ids.txt"
+EMPLOYEE_FILE_COL1="/mount/PRODDBA/oracle_scripts/leavers/employee_ids_col1.txt"
 SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/leavers/filtered_ids.txt"
 LOG_FILE="/mount/PRODDBA/oracle_scripts/leavers/lock_users.log"
 SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/leavers/lock.sql"
 TNS_FILE="/mount/PRODDBA/oracle_scripts/leavers/tnsnames.ora"
 DB_ENV_FILE="/mount/PRODDBA/oracle_scripts/leavers/all_inst_nonDataGuard_Y"
 DB_CRED_FILE="/mount/PRODDBA/oracle_scripts/leavers/db_credentials.txt"
+
+# Temporary files for column extraction
+FILTERED_COL1="/mount/PRODDBA/oracle_scripts/leavers/filtered_ids_col1.txt"
+FILTERED_COL2="/mount/PRODDBA/oracle_scripts/leavers/filtered_ids_col2.txt"
 
 # Database credentials
 DB_USER="SYSTEM"
@@ -35,8 +39,24 @@ DB_NAMES=("QP25PROD" "AU42PROD" "BM23PROD" "CN03PROD" "CN23PROD" "CX21PROD" "DL2
 # Clear previous log file
 > "$LOG_FILE"
 
-# Extract Employee IDs where Details contain specific keywords
-grep -E "Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT" "$INPUT_FILE" | awk '{print $2}' > "$SQL_INPUT_FILE"
+# Extract Employee IDs from Column 1 (First Column)
+awk '/Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT/ {print $1}' "$INPUT_FILE" > "$FILTERED_COL1"
+
+# Extract Employee IDs from Column 2 (Second Column)
+awk '/Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT/ {print $2}' "$INPUT_FILE" > "$FILTERED_COL2"
+
+# Validate employee file for column 1
+if [ ! -f "$EMPLOYEE_FILE_COL1" ]; then
+    echo "[$(date)] ERROR: First column employee file not found: $EMPLOYEE_FILE_COL1" | tee -a "$LOG_FILE"
+    exit 1
+fi
+
+# Filter first column employees by matching with employee_ids_col1.txt
+grep -F -f "$EMPLOYEE_FILE_COL1" "$FILTERED_COL1" > "$FILTERED_COL1.tmp"
+mv "$FILTERED_COL1.tmp" "$FILTERED_COL1"
+
+# Merge filtered first and second column employee IDs, remove duplicates
+cat "$FILTERED_COL1" "$FILTERED_COL2" | grep -v '^$' | sort | uniq > "$SQL_INPUT_FILE"
 
 # Check if Employee IDs exist
 if [ ! -s "$SQL_INPUT_FILE" ]; then
@@ -54,19 +74,11 @@ for DB_NAME in "${DB_NAMES[@]}"; do
         continue
     fi
 
-    #############################################
-    # Dynamic ORACLE_HOME & ORACLE_SID Selection#
-    #############################################
-
     # Extract database prefix (first 4 characters)
     CONN_STR=$(echo "$DB_NAME" | cut -c 1-4)
 
     # Extract ORACLE_HOME from environment file
     ORACLE_HOME=$(awk -F: -v db="$CONN_STR" '$1 == db {print $2}' "$DB_ENV_FILE")
-
-    # Debugging logs
-    echo "[$(date)] Extracted CONN_STR: $CONN_STR" | tee -a "$LOG_FILE"
-    echo "[$(date)] Extracted ORACLE_HOME: $ORACLE_HOME" | tee -a "$LOG_FILE"
 
     # Validate ORACLE_HOME
     if [ -z "$ORACLE_HOME" ] || [ ! -d "$ORACLE_HOME" ]; then
@@ -76,8 +88,6 @@ for DB_NAME in "${DB_NAMES[@]}"; do
 
     export ORACLE_HOME
     export PATH="$ORACLE_HOME/bin:$PATH"
-
-    # Set TNS_ADMIN to the correct directory
     export TNS_ADMIN="/mount/PRODDBA/oracle_scripts/leavers"
 
     # Extract ORACLE_SID dynamically for RAC
@@ -93,9 +103,7 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     # Test connection using tnsping
     tnsping "$DB_NAME" | tee -a "$LOG_FILE"
 
-    #############################################
-    # Build the SQL script dynamically          #
-    #############################################
+    # Build the SQL script dynamically
     > "$SQL_SCRIPT"
     echo "SET SERVEROUTPUT ON;" >> "$SQL_SCRIPT"
     echo "SPOOL $LOG_FILE APPEND;" >> "$SQL_SCRIPT"
@@ -121,9 +129,7 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     echo "SPOOL OFF;" >> "$SQL_SCRIPT"
     echo "EXIT;" >> "$SQL_SCRIPT"
 
-    #############################################
-    # Execute SQL script Securely (Hides Passwords) #
-    #############################################
+    # Execute SQL script securely
     sqlplus -s /nolog <<EOF | tee -a "$LOG_FILE"
     CONNECT $DB_USER/$DB_PASS@$DB_NAME
     SET SERVEROUTPUT ON;
@@ -133,14 +139,7 @@ for DB_NAME in "${DB_NAMES[@]}"; do
     EXIT;
 EOF
 
-    SQL_EXIT_CODE=${PIPESTATUS[0]}
-
-    if [ "$SQL_EXIT_CODE" -eq 0 ] || [ "$SQL_EXIT_CODE" -eq 2 ]; then
-        echo "[$(date)] Successfully processed database: $DB_NAME" | tee -a "$LOG_FILE"
-    else
-        echo "[$(date)] Error processing database: $DB_NAME (Exit Code: $SQL_EXIT_CODE)" | tee -a "$LOG_FILE"
-    fi
-
+    echo "[$(date)] Successfully processed database: $DB_NAME" | tee -a "$LOG_FILE"
     echo "" | tee -a "$LOG_FILE"
 done
 
