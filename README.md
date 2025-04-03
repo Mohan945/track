@@ -2,15 +2,15 @@
 ####################################
 # Locking Process with Dynamic Env #
 # SCRIPT : Leavers_Automated
-# VERSION : 005
+# VERSION : 001
 # AUTHOR : Mohan Tippasamudram (CO70989)
 # DATE : 3rd April 2025
 # PURPOSE : Lock users as part of daily Leavers/Movers process
 ####################################
 
 # Define file paths
-INPUT_FILE="/mount/PRODDBA/oracle_scripts/leavers/employee_ids.txt"
-EMPLOYEE_FILE_COL1="/mount/PRODDBA/oracle_scripts/leavers/employee_ids_col1.txt"
+INPUT_FILE="/mount/PRODDBA/oracle_scripts/leavers/employee_ids_csv.txt"
+EMPLOYEE_FILE_COL1="/mount/PRODDBA/oracle_scripts/leavers/employee_ids.txt"
 SQL_INPUT_FILE="/mount/PRODDBA/oracle_scripts/leavers/filtered_ids.txt"
 LOG_FILE="/mount/PRODDBA/oracle_scripts/leavers/lock_users.log"
 SQL_SCRIPT="/mount/PRODDBA/oracle_scripts/leavers/lock.sql"
@@ -40,7 +40,7 @@ DB_NAMES=("QP25PROD" "AU42PROD" "BM23PROD" "CN03PROD" "CN23PROD" "CX21PROD" "DL2
 > "$LOG_FILE"
 
 # Extract Employee IDs from Column 1 (First Column)
-awk '/Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT/ {print $1}' "$INPUT_FILE" > "$FILTERED_COL1"
+awk '/Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT/ {print $1}' "$EMPLOYEE_FILE_COL1" > "$FILTERED_COL1"
 
 # Extract Employee IDs from Column 2 (Second Column)
 awk '/Redundancy|Resignation|Termination|Retirement|EMPLOYEE HAS LEFT/ {print $2}' "$INPUT_FILE" > "$FILTERED_COL2"
@@ -58,89 +58,14 @@ mv "$FILTERED_COL1.tmp" "$FILTERED_COL1"
 # Merge filtered first and second column employee IDs, remove duplicates
 cat "$FILTERED_COL1" "$FILTERED_COL2" | grep -v '^$' | sort | uniq > "$SQL_INPUT_FILE"
 
-# Check if Employee IDs exist
-if [ ! -s "$SQL_INPUT_FILE" ]; then
-    echo "[$(date)] No matching Employee IDs found. Exiting." | tee -a "$LOG_FILE"
-    exit 1
-fi
 
-# Process each database
-for DB_NAME in "${DB_NAMES[@]}"; do
-    echo "[$(date)] Processing database: $DB_NAME" | tee -a "$LOG_FILE"
-
-    # Check if database exists in TNS file
-    if ! grep -q -w "$DB_NAME" "$TNS_FILE"; then
-        echo "[$(date)] Database $DB_NAME not found in TNS file. Skipping." | tee -a "$LOG_FILE"
-        continue
-    fi
-
-    # Extract database prefix (first 4 characters)
-    CONN_STR=$(echo "$DB_NAME" | cut -c 1-4)
-
-    # Extract ORACLE_HOME from environment file
-    ORACLE_HOME=$(awk -F: -v db="$CONN_STR" '$1 == db {print $2}' "$DB_ENV_FILE")
-
-    # Validate ORACLE_HOME
-    if [ -z "$ORACLE_HOME" ] || [ ! -d "$ORACLE_HOME" ]; then
-        echo "[$(date)] No valid ORACLE_HOME found for $DB_NAME. Skipping." | tee -a "$LOG_FILE"
-        continue
-    fi
-
-    export ORACLE_HOME
-    export PATH="$ORACLE_HOME/bin:$PATH"
-    export TNS_ADMIN="/mount/PRODDBA/oracle_scripts/leavers"
-
-    # Extract ORACLE_SID dynamically for RAC
-    export ORACLE_SID=$(ps -ef | grep pmon | grep -i "$DB_NAME" | awk -F_ '{print $3}')
-    echo "[$(date)] Set ORACLE_SID: $ORACLE_SID" | tee -a "$LOG_FILE"
-
-    # Verify sqlplus exists
-    if ! command -v sqlplus > /dev/null; then
-        echo "[$(date)] sqlplus not found in $ORACLE_HOME. Skipping." | tee -a "$LOG_FILE"
-        continue
-    fi
-
-    # Test connection using tnsping
-    tnsping "$DB_NAME" | tee -a "$LOG_FILE"
-
-    # Build the SQL script dynamically
-    > "$SQL_SCRIPT"
-    echo "SET SERVEROUTPUT ON;" >> "$SQL_SCRIPT"
-    echo "SPOOL $LOG_FILE APPEND;" >> "$SQL_SCRIPT"
-    echo "DECLARE" >> "$SQL_SCRIPT"
-    echo "  v_user_found NUMBER := 0;" >> "$SQL_SCRIPT"
-    echo "BEGIN" >> "$SQL_SCRIPT"
-
-    while read EMP_ID; do
-        if [ -n "$EMP_ID" ]; then
-            echo "  FOR user_rec IN (SELECT username FROM dba_users WHERE username LIKE '%${EMP_ID}%') LOOP" >> "$SQL_SCRIPT"
-            echo "    DBMS_OUTPUT.PUT_LINE('Locking user: ' || user_rec.username);" >> "$SQL_SCRIPT"
-            echo "    EXECUTE IMMEDIATE 'ALTER USER ' || user_rec.username || ' ACCOUNT LOCK';" >> "$SQL_SCRIPT"
-            echo "    v_user_found := 1;" >> "$SQL_SCRIPT"
-            echo "  END LOOP;" >> "$SQL_SCRIPT"
-        fi
-    done < "$SQL_INPUT_FILE"
-
-    echo "  IF v_user_found = 0 THEN" >> "$SQL_SCRIPT"
-    echo "    DBMS_OUTPUT.PUT_LINE('No matching users found to lock.');" >> "$SQL_SCRIPT"
-    echo "  END IF;" >> "$SQL_SCRIPT"
-    echo "END;" >> "$SQL_SCRIPT"
-    echo "/" >> "$SQL_SCRIPT"
-    echo "SPOOL OFF;" >> "$SQL_SCRIPT"
-    echo "EXIT;" >> "$SQL_SCRIPT"
-
-    # Execute SQL script securely
-    sqlplus -s /nolog <<EOF | tee -a "$LOG_FILE"
-    CONNECT $DB_USER/$DB_PASS@$DB_NAME
-    SET SERVEROUTPUT ON;
-    SET HEADING OFF;
-    SET FEEDBACK OFF;
-    @$SQL_SCRIPT
-    EXIT;
-EOF
-
-    echo "[$(date)] Successfully processed database: $DB_NAME" | tee -a "$LOG_FILE"
-    echo "" | tee -a "$LOG_FILE"
-done
-
-echo "[$(date)] Locking process completed." | tee -a "$LOG_FILE"
+[oracle@exa5dbadm01 leavers]$ cat employee_ids_csv.txt
+SLAESL  CO72417 2023565 Madhu Kumar     113103 Delivery Integration     Termination
+SLAESL  CO72590 2024230 Maqbul  Shaik   371101 Application Services     Termination
+SLAESL  CO72983 2025503 Pooja Pawar     113103 Delivery Integration     Termination
+SLAESL  CO70166 2013979 Clare Simpson   101555 Migration Hub Contractors        Termination
+SLAESL  CO68555 1006074 Chris Clark     113103 IT Testing and Release Management        Termination
+[oracle@exa5dbadm01 leavers]$ cat employee_ids.txt
+CO66258    Praneeth P            ITS : Solutions Supp ACTION - EMPLOYEE HAS LEFT
+CO67240    Annejanette Dickson   Platform Contact Cen ACTION - EMPLOYEE HAS LEFT
+[oracle@exa5dbadm01 leavers]$
