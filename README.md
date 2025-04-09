@@ -279,5 +279,49 @@ schedule.timezone.targetIndex=1
 # Notify Rules.
 notification=ACTION_REQUIRED, PROBLEMS
 
+[oracle@slglnbby ~]$ cat Clone_EXPDP_Job_EB37.txt
+# Job Parameter file to create the cloning job for EB37 EXPDP Export DataPump
+# The variable.default_shell_command is filled in as below
+##command=/mount/PRODDBA/oracle_scripts/cloning/exa_clone_expdp_gen_X8.sh 6 { EB37 5 for exa7 | EB37 6 for exa8 }
+
+name=EXA_EXPDP_GEN_CHG0406216_EB37_EXA7
+
+# Job Type.
+type=OSCommand
+
+# Job Description.
+description='EXPDP for EB37GPRO from exa7dbadm02: CHG0406216'
+
+# Job Owner.
+owner=sysman
+
+# Kind of Job.
+kind=active
+
+# Target List.
+target_list=exa7dbadm02.corp.standardlife.com:host
+
+# Target Criteria.
+targetType=host
+
+# Credential List.
+cred.defaultHostCred.<all_targets>:host=NAMED:SYSMAN:HOST_OEM13C_ORACLE_SSH
+
+# Description: (Optional) The complete command line, including parameters.
+# This text will appear as the command if this job is edited in the UI.
+# This command will be run without a shell.
+variable.default_shell_command=SED_DEF_BACK_CMD
+
+# Schedule.
+schedule.frequency=ONCE
+schedule.startTime=2025-04-13 15:00
+schedule.timezone.type=TIMEZONE_TARGET
+schedule.timezone.targetIndex=1
+
+# Notify Rules.
+notification=ACTION_REQUIRED, PROBLEMS
+[oracle@slglnbby ~]$ cat Clone_EB21_TZ02_TZ21_EB37_CHG0406216_jobs.txt
+
+
 
 I am not able to create job for EB37 why ?
