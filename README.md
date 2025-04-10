@@ -1,43 +1,26 @@
-[oracle@exa7dbadm02 leavers]$ ./testing.sh
-The Oracle base has been set to /u01/app/oracle
-Setting Oracle Instance Suffix for EB37GPRO
-                           .... to EB37GPRO_1
-EB37GPRO_1 /u01/app/oracle/product/12.2.0.1/dbhome_1
-./testing.sh: line 7: /mount/PRODDBA/oracle_scripts/leaversd/b_credentials.txt: No such file or directory
-PASSWORD=
-Environment Variables:
-ORACLE_SID=EB37GPRO_1
-ORACLE_HOME=/u01/app/oracle/product/12.2.0.1/dbhome_1
-PATH=/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin:/u01/app/oracle/product/12.2.0.1/dbhome_1/bin
-SQL*Plus location: /u01/app/oracle/product/12.2.0.1/dbhome_1/bin/sqlplus
-Testing DB Connection...
+1st step, I dont want to give schema name in the script it should refer a config file
+expdp system/"cowboy_1" directory=DATA_PUMP_DRMQ schemas=**** dumpfile=DRM_date_28_%U.dmp logfile=DRM_date_28.log parallel=5
 
-SP2-0306: Invalid option.
-Usage: CONN[ECT] [{logon|/|proxy} [AS {SYSDBA|SYSOPER|SYSASM|SYSBACKUP|SYSDG|SYSKM|SYSRAC}] [edition=value]]
-where <logon> ::= <username>[/<password>][@<connect_identifier>]
-      <proxy> ::= <proxyuser>[<username>][/<password>][@<connect_identifier>]
-[oracle@exa7dbadm02 leavers]$ cat testing.sh
-export ORACLE_SID=EB37GPRO
-export ORAENV_ASK=NO
-. /usr/local/bin/oraenv
+once export is done it should go to second step and should only use below queey
+2nd step which will generate drop quries for a schema, but when i run this i dont want to enter the schema name manually I wwant to create a config file it should take from that config file
+set pages 0
+set lines 300
+set heading off
+spool /tmp/dropobj.sql
+select 'drop table '||owner||'.'||table_name||' cascade constraints purge;'
+from dba_tables
+where owner = upper('&&owner')
+union all
+select 'drop '||object_type||' '||owner||'.'||object_name||';'
+from dba_objects
+where object_type not in ('TABLE','INDEX','PACKAGE BODY','TRIGGER','LOB')
+and object_type not like '%LINK%'
+and object_type not like '%PARTITION%'
+and owner = upper('&&owner')
+order by 1;
 
-# === Read password from file ===
-PWD_FILE=/mount/PRODDBA/oracle_scripts/leaversd/b_credentials.txt
-PASSWORD=$(<"$PWD_FILE")
-echo "PASSWORD= $PASSWORD"
-
-echo "Environment Variables:"
-echo "ORACLE_SID=$ORACLE_SID"
-echo "ORACLE_HOME=$ORACLE_HOME"
-echo "PATH=$PATH"
-echo "SQL*Plus location: $(which sqlplus)"
-
-# === DB Connection Test ===
-echo "Testing DB Connection..."
-echo "select name from v\$database;" | sqlplus -s SYSTEM/"${PASSWORD}"
-if [ $? -ne 0 ]; then
-    echo "ERROR: Oracle environment or DB connection failed."
-    echo "Export FAILED: Cannot connect to DB $DB_NAME." | mail -s "Export FAILED - $DB_NAME" "$EMAIL_TO"
-    exit 1
-fi
-why getti9ng error
+3rd step impdp of scp prod dumps
+DATA_PUMP_DRMQ
+/mount/DBDESIGN/exports/eb37drmq
+REMAP_SCHEMA=DRM_PROD:***** I dont want to give remapschema=DRM_PROD:**** it should refer a config file
+impdp system/"cowboy_1" DIRECTORY=DATA_PUMP_DRMQ DUMPFILE=DRM_EB37_2309_%U.dmp logfile=imp_EB37DRM2309_.log REMAP_SCHEMA=DRM_PROD:*****
