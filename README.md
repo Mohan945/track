@@ -1,43 +1,43 @@
-#!/bin/bash
+[oracle@exa7dbadm02 leavers]$ ./testing.sh
+The Oracle base has been set to /u01/app/oracle
+Setting Oracle Instance Suffix for EB37GPRO
+                           .... to EB37GPRO_1
+EB37GPRO_1 /u01/app/oracle/product/12.2.0.1/dbhome_1
+./testing.sh: line 7: /mount/PRODDBA/oracle_scripts/leaversd/b_credentials.txt: No such file or directory
+PASSWORD=
+Environment Variables:
+ORACLE_SID=EB37GPRO_1
+ORACLE_HOME=/u01/app/oracle/product/12.2.0.1/dbhome_1
+PATH=/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin:/u01/app/oracle/product/12.2.0.1/dbhome_1/bin
+SQL*Plus location: /u01/app/oracle/product/12.2.0.1/dbhome_1/bin/sqlplus
+Testing DB Connection...
 
-# === Variables ===
-DB_NAME="EB37PROD"
-SCHEMA="DRM_PROD"
-EXPORT_DIR="DATA_PUMP_DIR"
-LOCAL_DIR="/mount/PRODDBA/oracle/DP_EXPORTS/EB37PROD"
-REMOTE_USER="oracle"
-REMOTE_HOST="exa5dbafmo1"
-REMOTE_DIR="/path/on/exadata"
-TODAY=$(date +%Y%m%d)
-LOGFILE_MAIN="/tmp/expdp_EB37PROD_${TODAY}.log"
-
-DUMPFILE="DRM_EB37_${TODAY}_%U.dmp"
-LOGFILE="DRM_EB37_${TODAY}.log"
-
-# === Oracle environment ===
-export ORACLE_SID=${DB_NAME}
+SP2-0306: Invalid option.
+Usage: CONN[ECT] [{logon|/|proxy} [AS {SYSDBA|SYSOPER|SYSASM|SYSBACKUP|SYSDG|SYSKM|SYSRAC}] [edition=value]]
+where <logon> ::= <username>[/<password>][@<connect_identifier>]
+      <proxy> ::= <proxyuser>[<username>][/<password>][@<connect_identifier>]
+[oracle@exa7dbadm02 leavers]$ cat testing.sh
+export ORACLE_SID=EB37GPRO
 export ORAENV_ASK=NO
-. /usr/local/bin/oraenv >> $LOGFILE_MAIN 2>&1
+. /usr/local/bin/oraenv
 
 # === Read password from file ===
-PWD_FILE=~/expdp_pwd.txt
+PWD_FILE=/mount/PRODDBA/oracle_scripts/leaversd/b_credentials.txt
 PASSWORD=$(<"$PWD_FILE")
+echo "PASSWORD= $PASSWORD"
 
-# === Run export ===
-echo "Starting export on ${DB_NAME}..." >> $LOGFILE_MAIN
-expdp system/"${PASSWORD}" \
-  directory=${EXPORT_DIR} \
-  schemas=${SCHEMA} \
-  dumpfile=${DUMPFILE} \
-  logfile=${LOGFILE} \
-  parallel=5 >> $LOGFILE_MAIN 2>&1
+echo "Environment Variables:"
+echo "ORACLE_SID=$ORACLE_SID"
+echo "ORACLE_HOME=$ORACLE_HOME"
+echo "PATH=$PATH"
+echo "SQL*Plus location: $(which sqlplus)"
 
-# === SCP to Exadata ===
-echo "Copying dump files to Exadata..." >> $LOGFILE_MAIN
-scp ${LOCAL_DIR}/DRM_EB37_${TODAY}_*.dmp ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/ >> $LOGFILE_MAIN 2>&1
-scp ${LOCAL_DIR}/DRM_EB37_${TODAY}.log ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/ >> $LOGFILE_MAIN 2>&1
-
-# === Email notification ===
-mailx -s "EXPDP EB37PROD Backup Report - ${TODAY}" you@example.com < $LOGFILE_MAIN
-
-echo "Export completed and files copied. Email sent." >> $LOGFILE_MAIN
+# === DB Connection Test ===
+echo "Testing DB Connection..."
+echo "select name from v\$database;" | sqlplus -s SYSTEM/"${PASSWORD}"
+if [ $? -ne 0 ]; then
+    echo "ERROR: Oracle environment or DB connection failed."
+    echo "Export FAILED: Cannot connect to DB $DB_NAME." | mail -s "Export FAILED - $DB_NAME" "$EMAIL_TO"
+    exit 1
+fi
+why getti9ng error
