@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # === Step 0: Setup ===
-LOGFILE="/tmp/schema_refresh_$(date +%Y%m%d_%H%M%S).log"
+LOGFILE="/mount/PRODDBA/oracle_scripts/leavers/schema_refresh_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
 echo "===== Starting Schema Refresh Process ====="
 START_TIME=$(date)
 
 # === Step 1: Read config ===
-CONFIG_FILE="/mount/PRODDBA/oracle_scripts/schema_refresh/schema_refresh.cfg"
+CONFIG_FILE="/mount/PRODDBA/oracle_scripts/leavers/schema_refresh.cfg"
 TARGET_SCHEMA="EB37GDRQ"
 SRC_SCHEMA=$(grep "^${TARGET_SCHEMA}:" "$CONFIG_FILE" | cut -d':' -f2)
 
@@ -40,7 +40,7 @@ DUMPFILE="BACKUP_${TARGET_SCHEMA}_$(date +%Y%m%d)_%U.dmp"
 LOGFILE_EXP="export_${TARGET_SCHEMA}_$(date +%Y%m%d).log"
 
 echo "Starting export backup of $TARGET_SCHEMA..."
-expdp system/"$(< /mount/PRODDBA/oracle_scripts/schema_refresh/password.txt)" \
+expdp system/"cowboy_1" \
   directory=$DUMP_DIR \
   schemas=$TARGET_SCHEMA \
   dumpfile=$DUMPFILE \
@@ -53,7 +53,7 @@ echo "--------------------------"
 # === Step 5: Generate & Run Drop Queries ===
 DROP_SCRIPT="/tmp/drop_${TARGET_SCHEMA}_objects.sql"
 echo "Generating DROP statements for $TARGET_SCHEMA..."
-sqlplus -s system/"$(< /mount/PRODDBA/oracle_scripts/schema_refresh/password.txt)" <<EOF
+sqlplus -s system/"cowboy_1" <<EOF
 set pages 0
 set lines 300
 set heading off
@@ -73,18 +73,19 @@ spool off
 EOF
 
 echo "Running DROP statements..."
-sqlplus -s system/"$(< /mount/PRODDBA/oracle_scripts/schema_refresh/password.txt)" @"$DROP_SCRIPT"
+sqlplus -s system/"cowboy_1" @"$DROP_SCRIPT"
 echo "Drop complete."
 echo "--------------------------"
 
 # === Step 6: Import from Prod SCP Dump ===
-DUMP_DIR_PATH="/mount/DBDESIGN/exports/eb37drmq"
+IMP_DUMP_DIR="DATA_PUMP_DRMQ"
+DUMP_DIR_PATH="/mount/PRODDBA/oracle/EB37DRMQ"
 DUMP_PATTERN="DRM_EB37_*.dmp"
 IMP_LOGFILE="imp_${TARGET_SCHEMA}_$(date +%Y%m%d).log"
 
 echo "Starting import from SCP dump..."
-impdp system/"$(< /mount/PRODDBA/oracle_scripts/schema_refresh/password.txt)" \
-  directory=$DUMP_DIR \
+impdp system/"cowboy_1" \
+  directory=$IMP_DUMP_DIR \
   dumpfile=$DUMP_PATTERN \
   logfile=$IMP_LOGFILE \
   remap_schema=${SRC_SCHEMA}:${TARGET_SCHEMA} \
@@ -99,6 +100,3 @@ echo "===== Schema Refresh Completed ====="
 echo "Start Time: $START_TIME"
 echo "End Time  : $END_TIME"
 echo "Log File  : $LOGFILE"
-
-
-Give me config file for this
