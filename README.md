@@ -48,7 +48,7 @@ DUMPFILE="BACKUP_${TARGET_SCHEMA}_$(date +%Y%m%d)_%U.dmp"
 LOGFILE_EXP="export_${TARGET_SCHEMA}_$(date +%Y%m%d).log"
 
 echo "Starting export backup of target schema [$TARGET_SCHEMA]..."
-expdp system/"$(< /mount/PRODDBA/oracle_scripts/leavers/password.txt)" \
+expdp system/"cowboy_1" \
   directory=$DUMP_DIR \
   schemas=$TARGET_SCHEMA \
   dumpfile=$DUMPFILE \
@@ -61,7 +61,7 @@ echo "--------------------------"
 # === Step 5: Generate & Run Drop Queries ===
 DROP_SCRIPT="/tmp/drop_${TARGET_SCHEMA}_objects.sql"
 echo "Generating DROP statements for $TARGET_SCHEMA..."
-sqlplus -s system/"$(< /mount/PRODDBA/oracle_scripts/leavers/password.txt)" <<EOF
+sqlplus -s system/"cowboy_1" <<EOF
 set pages 0
 set lines 300
 set heading off
@@ -80,25 +80,24 @@ order by 1;
 spool off
 EOF
 
-echo "Running DROP statements..."
-sqlplus -s system/"$(< /mount/PRODDBA/oracle_scripts/leavers/password.txt)" @"$DROP_SCRIPT"
+echo "-----Running DROP statements..."
+sqlplus -s system/"cowboy_1" @"$DROP_SCRIPT"
 echo "Drop complete."
 echo "--------------------------"
 
 # === Step 6: Import from Prod SCP Dump ===
 # The dump files should be named as per production exports, for example: DRM_EB37_*.dmp
-IMP_DUMP_DIR="DATA_PUMP_DRMQ"
-DUMP_DIR_PATH="/mount/PRODDBA/oracle/EB37GDRQ"  # Adjust if required: this is the directory where dump files are stored.
+IMP_DUMP_DIR="DATA_EXP_IMP"
+DUMP_DIR_PATH="/mount/PRODDBA/oracle/EB37DRMQ" 
 DUMP_PATTERN="DRM_EB37_*.dmp"
 IMP_LOGFILE="imp_${TARGET_SCHEMA}_$(date +%Y%m%d).log"
 
 echo "Starting import from SCP dump..."
-impdp system/"$(< /mount/PRODDBA/oracle_scripts/leavers/password.txt)" \
+impdp system/"cowboy_1" \
   directory=$IMP_DUMP_DIR \
   dumpfile=$DUMP_PATTERN \
   logfile=$IMP_LOGFILE \
-  remap_schema=${SRC_SCHEMA}:${TARGET_SCHEMA} \
-  parallel=5
+  remap_schema=${SRC_SCHEMA}:${TARGET_SCHEMA}
 
 echo "Import completed: $IMP_LOGFILE"
 echo "--------------------------"
