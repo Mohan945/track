@@ -1,27 +1,34 @@
 #!/bin/bash
 
-# === Step 0: Setup ===
+# === Step 0: Setup Logging ===
 LOGFILE="/mount/PRODDBA/oracle_scripts/leavers/schema_refresh_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
 echo "===== Starting Schema Refresh Process ====="
 START_TIME=$(date)
 
-# === Step 1: Read config ===
+# === Step 1: Read Config File ===
 CONFIG_FILE="/mount/PRODDBA/oracle_scripts/leavers/schema_refresh.cfg"
-TARGET_SCHEMA="EB37GDRQ"
-SRC_SCHEMA=$(grep "^${TARGET_SCHEMA}:" "$CONFIG_FILE" | cut -d':' -f2)
+# Set the DB name (the Oracle instance name) here.
+DB_NAME="EB37GDRQ"
 
-if [ -z "$SRC_SCHEMA" ]; then
-  echo "ERROR: Source schema not found in config for $TARGET_SCHEMA"
+# Read a config line with the format: DB_NAME:SOURCE_SCHEMA:TARGET_SCHEMA
+LINE=$(grep "^${DB_NAME}:" "$CONFIG_FILE")
+if [ -z "$LINE" ]; then
+  echo "ERROR: Config not found for DB $DB_NAME"
   exit 1
 fi
 
-echo "Source Schema: $SRC_SCHEMA"
-echo "Target Schema: $TARGET_SCHEMA"
+# Parse fields from the config file
+SRC_SCHEMA=$(echo "$LINE" | cut -d':' -f2)
+TARGET_SCHEMA=$(echo "$LINE" | cut -d':' -f3)
+
+echo "Database (ORACLE_SID): $DB_NAME"
+echo "Source Schema (for import remap): $SRC_SCHEMA"
+echo "Target Schema (to be refreshed): $TARGET_SCHEMA"
 
 # === Step 2: Set Oracle Environment ===
-export ORACLE_SID=${TARGET_SCHEMA}
+export ORACLE_SID=${DB_NAME}
 export ORAENV_ASK=NO
 . /usr/local/bin/oraenv > /dev/null 2>&1
 
@@ -35,12 +42,13 @@ echo "Environment check complete."
 echo "--------------------------"
 
 # === Step 4: Export Backup of Target Schema ===
+# This backup is taken from the target schema before performing the refresh.
 DUMP_DIR="DATA_PUMP_DRMQ"
 DUMPFILE="BACKUP_${TARGET_SCHEMA}_$(date +%Y%m%d)_%U.dmp"
 LOGFILE_EXP="export_${TARGET_SCHEMA}_$(date +%Y%m%d).log"
 
-echo "Starting export backup of $TARGET_SCHEMA..."
-expdp system/"cowboy_1" \
+echo "Starting export backup of target schema [$TARGET_SCHEMA]..."
+expdp system/"$(< /mount/PRODDBA/oracle_scripts/leavers/password.txt)" \
   directory=$DUMP_DIR \
   schemas=$TARGET_SCHEMA \
   dumpfile=$DUMPFILE \
@@ -53,38 +61,39 @@ echo "--------------------------"
 # === Step 5: Generate & Run Drop Queries ===
 DROP_SCRIPT="/tmp/drop_${TARGET_SCHEMA}_objects.sql"
 echo "Generating DROP statements for $TARGET_SCHEMA..."
-sqlplus -s system/"cowboy_1" <<EOF
+sqlplus -s system/"$(< /mount/PRODDBA/oracle_scripts/leavers/password.txt)" <<EOF
 set pages 0
 set lines 300
 set heading off
 spool $DROP_SCRIPT
 select 'drop table '||owner||'.'||table_name||' cascade constraints purge;'
-from dba_tables
-where owner = upper('$TARGET_SCHEMA')
+  from dba_tables
+  where owner = upper('$TARGET_SCHEMA')
 union all
 select 'drop '||object_type||' '||owner||'.'||object_name||';'
-from dba_objects
-where object_type not in ('TABLE','INDEX','PACKAGE BODY','TRIGGER','LOB')
-and object_type not like '%LINK%'
-and object_type not like '%PARTITION%'
-and owner = upper('$TARGET_SCHEMA')
+  from dba_objects
+  where object_type not in ('TABLE','INDEX','PACKAGE BODY','TRIGGER','LOB')
+    and object_type not like '%LINK%'
+    and object_type not like '%PARTITION%'
+    and owner = upper('$TARGET_SCHEMA')
 order by 1;
 spool off
 EOF
 
 echo "Running DROP statements..."
-sqlplus -s system/"cowboy_1" @"$DROP_SCRIPT"
+sqlplus -s system/"$(< /mount/PRODDBA/oracle_scripts/leavers/password.txt)" @"$DROP_SCRIPT"
 echo "Drop complete."
 echo "--------------------------"
 
 # === Step 6: Import from Prod SCP Dump ===
+# The dump files should be named as per production exports, for example: DRM_EB37_*.dmp
 IMP_DUMP_DIR="DATA_PUMP_DRMQ"
-DUMP_DIR_PATH="/mount/PRODDBA/oracle/EB37DRMQ"
+DUMP_DIR_PATH="/mount/PRODDBA/oracle/EB37GDRQ"  # Adjust if required: this is the directory where dump files are stored.
 DUMP_PATTERN="DRM_EB37_*.dmp"
 IMP_LOGFILE="imp_${TARGET_SCHEMA}_$(date +%Y%m%d).log"
 
 echo "Starting import from SCP dump..."
-impdp system/"cowboy_1" \
+impdp system/"$(< /mount/PRODDBA/oracle_scripts/leavers/password.txt)" \
   directory=$IMP_DUMP_DIR \
   dumpfile=$DUMP_PATTERN \
   logfile=$IMP_LOGFILE \
@@ -94,7 +103,7 @@ impdp system/"cowboy_1" \
 echo "Import completed: $IMP_LOGFILE"
 echo "--------------------------"
 
-# === Completion ===
+# === Step 7: Completion ===
 END_TIME=$(date)
 echo "===== Schema Refresh Completed ====="
 echo "Start Time: $START_TIME"
