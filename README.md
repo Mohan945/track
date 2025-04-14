@@ -1,10 +1,6 @@
+ORA-39001: invalid argument value
+ORA-39000: bad dump file specification
+ORA-31640: unable to open dump file "/mount/PRODDBA/oracle/EB37DRMQ/DRM_EB37_20250413_01.dmp" for read
+ORA-27037: unable to obtain file status
+Linux-x86_64 Error: 2: No such file or directory
 
-# If DUMP_DATE is not set, default to yesterday's date.
-: ${DUMP_DATE:=$(date -d "yesterday" +%Y%m%d)}
-
-impdp system/"your_password" \
-  directory=$IMP_DUMP_DIR \
-  dumpfile="DRM_EB37_${DUMP_DATE}_%U.dmp" \
-  logfile=imp_${TARGET_SCHEMA}_${DUMP_DATE}.log \
-  remap_schema=${SRC_SCHEMA}:${TARGET_SCHEMA} \
-  parallel=5
