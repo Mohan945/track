@@ -1,37 +1,4 @@
-SET LINESIZE 200
-COLUMN DEST_NAME FORMAT A20
-COLUMN STATUS FORMAT A10
-COLUMN ERROR FORMAT A40
-COLUMN APPLIED_SEQ FORMAT 999999
-COLUMN ARCHIVED_SEQ FORMAT 999999
-COLUMN SEQ_GAP FORMAT 9999
-
-PROMPT === Archive Destination Status Summary ===
-SELECT DEST_ID,
-       DEST_NAME,
-       STATUS,
-       APPLIED_SEQ#,
-       ARCHIVED_SEQ#,
-       (ARCHIVED_SEQ# - APPLIED_SEQ#) AS SEQ_GAP,
-       ERROR
-  FROM V$ARCHIVE_DEST_STATUS
- WHERE STATUS = 'VALID'
-   AND DESTINATION IS NOT NULL;
-
-PROMPT
-PROMPT === Transport / Apply Lag (from V$DATAGUARD_STATS) ===
-SELECT NAME, VALUE, UNIT
-  FROM V$DATAGUARD_STATS
- WHERE NAME IN ('apply lag', 'transport lag');
-
-PROMPT
-PROMPT === Apply Rate (V$DATAGUARD_STATS) ===
-SELECT NAME, VALUE, UNIT
-  FROM V$DATAGUARD_STATS
- WHERE NAME = 'apply rate';
-
-PROMPT
-PROMPT === Standby Apply Processes (V$MANAGED_STANDBY) ===
-SELECT PROCESS, STATUS, THREAD#, SEQUENCE#
-  FROM V$MANAGED_STANDBY
- WHERE PROCESS IN ('MRP0', 'RFS', 'APPLY');
+•	During the refresh, the product (application) reads production data that includes user creation instructions.
+	•	Those users get auto-created before your import step.
+	•	When the import step tries to re-import those users/accounts, it fails because the user/schema already exists.
+	•	Passwords and other attributes are not re-applied since the user creation step is skipped.
