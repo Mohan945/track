@@ -1,4 +1,4 @@
-•	During the refresh, the product (application) reads production data that includes user creation instructions.
-	•	Those users get auto-created before your import step.
-	•	When the import step tries to re-import those users/accounts, it fails because the user/schema already exists.
-	•	Passwords and other attributes are not re-applied since the user creation step is skipped.
+SELECT s.sid, s.serial#, s.username, t.used_blocks*8/1024 AS MB_USED, t.tablespace
+FROM v$sort_usage t, v$session s
+WHERE t.session_addr = s.saddr
+ORDER BY MB_USED DESC;
