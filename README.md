@@ -1,9 +1,18 @@
+SET PAGESIZE 1000
+SET LINESIZE 200
+COLUMN sql_text FORMAT A100
+COLUMN sharable_mem FORMAT 999,999,999
+
 SELECT
-  ROUND(SUM(bytes) / 1024 / 1024) AS total_sga_mb,
-  ROUND(SUM(CASE WHEN name = 'free memory' THEN bytes ELSE 0 END) / 1024 / 1024) AS free_sga_mb,
-  ROUND(
-    100 * SUM(CASE WHEN name = 'free memory' THEN bytes ELSE 0 END) / SUM(bytes),
-    2
-  ) AS free_percent
+  sharable_mem,
+  executions,
+  parse_calls,
+  loads,
+  sql_id,
+  SUBSTR(sql_text, 1, 100) AS sql_text
 FROM
-  v$sgastat;
+  v$sqlarea
+WHERE
+  sharable_mem > 1048576
+ORDER BY
+  sharable_mem DESC;
