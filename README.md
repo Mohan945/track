@@ -1,12 +1,7 @@
-SET PAGESIZE 100
 SET LINESIZE 200
-COL SQL_ID FOR A15
-COL SHARABLE_MEM FOR 999,999,999
-COL EXECUTIONS FOR 999,999
-COL SQL_TEXT FOR A100
-
-SELECT SQL_ID, EXECUTIONS, SHARABLE_MEM, SQL_TEXT
-FROM v$sqlarea
-WHERE sharable_mem > 1048576  -- >1MB
-AND executions < 5            -- rarely executed
-ORDER BY sharable_mem DESC;
+SELECT shared_pool_size_for_estimate AS "Estimated Size (MB)",
+       estd_lc_size AS "Est LC Size",
+       estd_lc_memory_object_hits AS "Hits",
+       estd_lc_time_saved AS "Time Saved (ms)"
+FROM v$shared_pool_advice
+ORDER BY shared_pool_size_for_estimate;
