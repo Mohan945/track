@@ -1,4 +1,3 @@
-
 # === Configuration ===
 DB_NAME="EB37GPRO"
 SCHEMA="DRM_PROD"
@@ -11,13 +10,13 @@ TODAY=$(date +%Y%m%d)
 DUMPFILE="DRM_EB37PROD_${TODAY}_%U.dmp"
 LOGFILE="DRM_EB37PROD_${TODAY}.log"
 LOGFILE_FULL="/mount/PRODDBA/oracle_scripts/leavers/export_scp_${DB_NAME}_${TODAY}.log"
-EMAIL_SUBJECT="Export and SCP Report for ${DB_NAME} - ${TODAY}"
+EMAIL_SUBJECT="Export and Copy Report for ${DB_NAME} - ${TODAY}"
 
 # === Start Logging ===
 exec > >(tee -a "$LOGFILE_FULL") 2>&1
 
 echo "================================================================================"
-echo "Export + SCP Script Started - $(date)"
+echo "Export + Copy Script Started - $(date)"
 echo "================================================================================"
 
 # === Oracle environment ===
@@ -45,7 +44,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-
 # === Run export ===
 echo "Starting export on ${DB_NAME}..." >> $LOGFILE_FULL
 expdp system/"${PASSWORD}" \
@@ -62,17 +60,22 @@ if [ $? -ne 0 ]; then
 fi
 echo "Export completed successfully."
 
-# === SCP to Exadata ===
-echo "Starting SCP transfer to $REMOTE_HOST..."
-scp ${LOCAL_DIR}/DRM_EB37_${TODAY}_*.dmp ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/
-scp ${LOCAL_DIR}/DRM_EB37_${TODAY}.log ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/
+# === Remove old files from REMOTE_DIR ===
+echo "Removing old DRM_EB37 files from $REMOTE_DIR..."
+rm -f ${REMOTE_DIR}/DRM_EB37*.dmp
+rm -f ${REMOTE_DIR}/DRM_EB37*.log
+
+# === Copy to REMOTE_DIR ===
+echo "Copying files to $REMOTE_DIR..."
+cp ${LOCAL_DIR}/DRM_EB37_${TODAY}_*.dmp ${REMOTE_DIR}
+cp ${LOCAL_DIR}/DRM_EB37_${TODAY}.log ${REMOTE_DIR}
 
 if [ $? -ne 0 ]; then
-    echo "ERROR: SCP failed."
-    echo "SCP FAILED for $DB_NAME." | mail -s "SCP FAILED - $DB_NAME" "$EMAIL_TO"
+    echo "ERROR: Copy failed."
+    echo "COPY FAILED for $DB_NAME." | mail -s "COPY FAILED - $DB_NAME" "$EMAIL_TO"
     exit 1
 fi
-echo "SCP completed successfully."
+echo "Copy completed successfully."
 
 # === Email final log ===
 echo "Sending email to $EMAIL_TO..."
@@ -81,7 +84,3 @@ mail -s "$EMAIL_SUBJECT" "$EMAIL_TO" < "$LOGFILE_FULL"
 echo "================================================================================"
 echo "Script Completed - $(date)"
 echo "================================================================================"
-
-Change the scp to cp i dont need scp as below and i need to clear the dumps on remote_dir dumps start with DRM_EB37 before copiying 
-cp ${LOCAL_DIR}/DRM_EB37_${TODAY}_*.dmp ${REMOTE_DIR}
-cp ${LOCAL_DIR}/DRM_EB37_${TODAY}.log ${REMOTE_DIR}
