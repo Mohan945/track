@@ -1,6 +1,8 @@
 SELECT username,
-       MAX(timestamp) AS last_login
+       timestamp,
+       returncode,
+       os_username,
+       userhost
 FROM dba_audit_session
-WHERE username = 'USERNAME_IN_UPPERCASE'
-  AND returncode = 0
-GROUP BY username;
+WHERE returncode != 0
+ORDER BY timestamp DESC;
