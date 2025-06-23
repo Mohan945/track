@@ -106,3 +106,13 @@ process_AccessAble_file
 
 echo " Files created/used during the execution of this family of jobs"
 ls -lrt /mount/PRODDBA/oracle_scripts/recert/Process_AccessAble_*Returns.sql
+
+
+[oracle@slgldcby recert]$ ./Process_AccessAble_Returns.sh
+rm: cannot remove ‘*Returns.sql’: No such file or directory
+rm: cannot remove ‘*record.sed’: No such file or directory
+/mount/PRODDBA/oracle_scripts/recert/oracle_Recertifications_Results_Issue_AccessAble_Extract.records
+Original Config file:  /mount/PRODDBA/oracle_scripts/recert/oracle_Recertifications_Results_Issue_AccessAble_Extract.records
+ Files created/used during the execution of this family of jobs
+ls: cannot access /mount/PRODDBA/oracle_scripts/recert/Process_AccessAble_*Returns.sql: No such file or directory
+
