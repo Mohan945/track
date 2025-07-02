@@ -1,1 +1,1 @@
-sar -r -f /var/log/sa/sa02 -s 15:20:00 -e 15:30:00
+Linux 4.1.12-124.42.4.el7uek.x86_64 (exa7dbadm01.corp.standardlife.com)         07/02/2025      _x86_64_        (44 CPU)
